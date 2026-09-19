@@ -1,0 +1,15 @@
+{
+"classname" "info_level_metadata"
+"map_id" "orphan_level"
+"level_name" "Orphan Level"
+"level_creator" "Test Author"
+"level_description" "A test level with orphaned textures"
+"game_mode" "std"
+"checkpoints" "0"
+}
+{
+"classname" "worldspawn"
+{
+( 0 0 0 ) ( 0 1 0 ) ( 0 0 1 ) custom/used_tex 0 0 0 1 1
+}
+}

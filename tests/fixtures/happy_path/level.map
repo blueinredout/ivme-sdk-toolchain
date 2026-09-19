@@ -1,0 +1,22 @@
+{
+"classname" "info_level_metadata"
+"map_id" "happy_level"
+"level_name" "Happy Level"
+"level_creator" "Test Author"
+"level_description" "A test level for integration testing"
+"game_mode" "std"
+"checkpoints" "2"
+}
+{
+"classname" "worldspawn"
+{
+( 0 0 0 ) ( 0 1 0 ) ( 0 0 1 ) custom/wood 0 0 0 1 1
+( 1 0 0 ) ( 1 1 0 ) ( 1 0 1 ) custom/brick 0 0 0 1 1
+}
+}
+{
+"classname" "trigger_checkpoint"
+}
+{
+"classname" "trigger_checkpoint"
+}
