@@ -60,11 +60,16 @@ fn run(cli: Cli) -> Result<(), CompileError> {
     // 4. Parse map
     let parse_result = map::parse_map(&map_path, &map_content)?;
 
-    // 5. Validate metadata
+    // 5. Resolve textures (missing = warning, not error)
     let texture_resolution = textures::resolve_textures(
         &map_dir.join("textures"),
         &parse_result.textures,
-    )?;
+    );
+
+    // Emit missing texture warnings
+    for tex_name in &texture_resolution.missing {
+        eprintln!("Warning: MISSING_TEXTURE - \"{}\" not found in textures/ directory", tex_name);
+    }
 
     let validation = validation::validate_all(
         parse_result.metadata,

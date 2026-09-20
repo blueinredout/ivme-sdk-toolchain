@@ -111,8 +111,8 @@ fn test_missing_texture_error() {
         "--map", map.to_str().unwrap(),
     ]);
     
-    assert_eq!(code, 1, "Expected exit code 1 for missing texture");
-    assert!(stderr.contains("Missing texture"), "Should report missing texture");
+    assert_eq!(code, 0, "Missing texture should be a warning, not an error");
+    assert!(stderr.contains("MISSING_TEXTURE"), "Should warn about missing texture");
 }
 
 #[test]
