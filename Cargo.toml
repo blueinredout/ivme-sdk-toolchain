@@ -1,0 +1,21 @@
+[workspace]
+members = ["ivme-ivl-compiler", "ivme-wad-maker"]
+resolver = "2"
+
+# Shared dependency specs: one version + feature set per crate,
+# compiled once into the single workspace `target/` dir.
+[workspace.dependencies]
+anyhow = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+colored = "2.1"
+image = { version = "0.25", default-features = false, features = ["png", "tga"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+# Moved up from ivme-ivl-compiler: release profiles may only be
+# defined in the workspace root.
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
