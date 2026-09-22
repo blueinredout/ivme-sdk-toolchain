@@ -28,7 +28,7 @@ fn setup_fixtures() {
 }
 
 fn run_compiler(args: &[&str]) -> (String, String, i32) {
-    let exe = env!("CARGO_BIN_EXE_ivl-compile");
+    let exe = env!("CARGO_BIN_EXE_ivlc");
     let output = Command::new(exe)
         .args(args)
         .output()

@@ -1,4 +1,4 @@
-# ivl-compile
+# ivlc
 
 A standalone command-line tool that compiles TrenchBroom `.map` projects into self-contained `.ivl` ZIP archives for the IVME game.
 
@@ -26,12 +26,12 @@ cargo build
 cargo build --release
 ```
 
-The release binary is produced at `target/release/ivl-compile` (or `ivl-compile.exe` on Windows).
+The release binary is produced at `target/release/ivlc` (or `ivlc.exe` on Windows).
 
 ## Usage
 
 ```
-ivl-compile --map <path> [--preview <path>] [--output <path>] [--dry-run]
+ivlc --map <path> [--preview <path>] [--output <path>] [--dry-run]
 ```
 
 ### Arguments
@@ -47,16 +47,16 @@ ivl-compile --map <path> [--preview <path>] [--output <path>] [--dry-run]
 
 ```bash
 # Basic compilation
-ivl-compile --map my_level/level.map
+ivlc --map my_level/level.map
 
 # Custom output path
-ivl-compile --map my_level/level.map --output dist/custom.ivl
+ivlc --map my_level/level.map --output dist/custom.ivl
 
 # Validate only
-ivl-compile --map my_level/level.map --dry-run
+ivlc --map my_level/level.map --dry-run
 
 # Explicit preview
-ivl-compile --map my_level/level.map --preview screenshot.png
+ivlc --map my_level/level.map --preview screenshot.png
 ```
 
 ## Project Structure
@@ -120,7 +120,7 @@ cargo test --test integration
 
 ## Distribution
 
-The compiled binary is fully standalone with no runtime dependencies. Distribute `ivl-compile.exe` (Windows) or `ivl-compile` (Linux) directly.
+The compiled binary is fully standalone with no runtime dependencies. Distribute `ivlc.exe` (Windows) or `ivlc` (Linux) directly.
 
 ## License
 

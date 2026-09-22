@@ -8,9 +8,9 @@ use colored::Colorize;
 use image::imageops::FilterType;
 use image::{GenericImageView, RgbaImage};
 
-/// ivme-wad-maker: folder-list txt -> WAD3 (JACK / Hammer / TrenchBroom / func_godot)
+/// wadgen: folder-list txt -> WAD3 (JACK / Hammer / TrenchBroom / func_godot)
 #[derive(Parser, Debug)]
-#[command(name = "ivme-wad-maker", version)]
+#[command(name = "wadgen", version)]
 struct Cli {
     /// Path to the .txt list file (one folder per line, non-recursive)
     list_file: PathBuf,

@@ -2,7 +2,7 @@ use clap::Parser;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(name = "ivl-compile", about = "Compiles TrenchBroom .map projects into .ivl archives")]
+#[command(name = "ivlc", about = "Compiles TrenchBroom .map projects into .ivl archives")]
 pub struct Cli {
     /// Path to level.map
     #[arg(long = "map")]

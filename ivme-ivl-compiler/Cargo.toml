@@ -1,5 +1,5 @@
 [package]
-name = "ivl-compile"
+name = "ivlc"
 version = "0.1.0"
 edition = "2021"
 description = "Compiles TrenchBroom .map projects into .ivl archives for IVME"

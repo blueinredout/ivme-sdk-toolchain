@@ -1,5 +1,5 @@
 [package]
-name = "ivme-wad-maker"
+name = "wadgen"
 version = "0.1.0"
 edition = "2021"
 
