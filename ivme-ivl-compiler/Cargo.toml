@@ -1,0 +1,20 @@
+[package]
+name = "ivl-compile"
+version = "0.1.0"
+edition = "2021"
+description = "Compiles TrenchBroom .map projects into .ivl archives for IVME"
+
+[dependencies]
+clap = { version = "4", default-features = false, features = ["std", "help", "derive"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = "symbols"

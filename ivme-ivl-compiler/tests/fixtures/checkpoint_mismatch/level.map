@@ -1,0 +1,18 @@
+{
+"classname" "info_level_metadata"
+"map_id" "checkpoint_level"
+"level_name" "Checkpoint Level"
+"level_creator" "Test Author"
+"level_description" "A test level with checkpoint mismatch"
+"game_mode" "std"
+"checkpoints" "5"
+}
+{
+"classname" "worldspawn"
+}
+{
+"classname" "trigger_checkpoint"
+}
+{
+"classname" "trigger_checkpoint"
+}
