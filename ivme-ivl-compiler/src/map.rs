@@ -10,7 +10,116 @@ pub struct ParseResult {
     pub checkpoint_count: i32,
 }
 
-pub fn parse_map(_path: &Path, content: &str) -> Result<ParseResult, CompileError> {
+pub fn parse_map(path: &Path, content: &str) -> Result<ParseResult, CompileError> {
+    let is_vmf = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("vmf"))
+        .unwrap_or(false);
+    if is_vmf {
+        parse_vmf(content)
+    } else {
+        parse_quake(path, content)
+    }
+}
+
+/// Valve Map Format (Hammer / JACK VMF export, also read by func_godot).
+/// Only three things are extracted: `"material"` values from `side`
+/// blocks (any nesting — world solids and brush-entity solids alike),
+/// top-level `entity` properties (metadata + checkpoint count).
+/// Everything else (planes, UV axes, displacements, visgroups) is ignored.
+fn parse_vmf(content: &str) -> Result<ParseResult, CompileError> {
+    use std::collections::HashMap;
+
+    let mut metadata = None;
+    let mut checkpoint_count = 0;
+    let mut textures = BTreeSet::new();
+    let mut stack: Vec<String> = Vec::new();
+    let mut pending: Option<String> = None;
+    let mut entity_keys: HashMap<String, String> = HashMap::new();
+    let mut side_material: Option<String> = None;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        // Block open: `{` alone (VMF style) or `name {` on one line.
+        if trimmed == "{" || trimmed.ends_with('{') {
+            let name = if trimmed == "{" {
+                pending.take().unwrap_or_default().to_lowercase()
+            } else {
+                pending.take();
+                trimmed[..trimmed.len() - 1].trim().to_lowercase()
+            };
+            if name == "entity" {
+                entity_keys.clear();
+            } else if name == "side" {
+                side_material = None;
+            }
+            stack.push(name);
+            continue;
+        }
+        if trimmed == "}" {
+            if let Some(name) = stack.pop() {
+                if name == "side" {
+                    if let Some(m) = side_material.take() {
+                        if !is_tool_material(&m) {
+                            textures.insert(m);
+                        }
+                    }
+                } else if name == "entity" && stack.is_empty() {
+                    if let Some(classname) = entity_keys.get("classname") {
+                        if classname == "info_level_metadata" {
+                            let meta = extract_metadata(&entity_keys)?;
+                            match metadata {
+                                None => metadata = Some(meta),
+                                Some(_) => return Err(CompileError::DuplicateMetadata),
+                            }
+                        } else if classname == "trigger_checkpoint" {
+                            checkpoint_count += 1;
+                        }
+                    }
+                    entity_keys.clear();
+                }
+            }
+            pending = None;
+            continue;
+        }
+        if let Some((key, value)) = parse_key_value(trimmed) {
+            if stack.len() == 1 && stack.last().map(|s| s == "entity").unwrap_or(false) {
+                entity_keys.insert(key, value);
+            } else if stack.last().map(|s| s == "side").unwrap_or(false) && key == "material" {
+                side_material = Some(value);
+            }
+            pending = None;
+            continue;
+        }
+        // Bare block-name line (`world`, `solid`, `side`, …). Anything else
+        // resets, so stray data can never be mistaken for a block name.
+        if !trimmed.starts_with('"')
+            && !trimmed.contains([' ', '\t'])
+        {
+            pending = Some(trimmed.to_string());
+        } else {
+            pending = None;
+        }
+    }
+
+    Ok(ParseResult {
+        metadata,
+        textures,
+        checkpoint_count,
+    })
+}
+
+/// Tool / invisible materials carry no visible texture: Quake-style
+/// `__` prefixes plus Valve's `tools/` namespace (case-insensitive).
+fn is_tool_material(m: &str) -> bool {
+    m.starts_with("__") || m.to_lowercase().starts_with("tools/")
+}
+
+pub fn parse_quake(_path: &Path, content: &str) -> Result<ParseResult, CompileError> {
     let mut metadata = None;
     let mut checkpoint_count = 0;
     let mut textures = BTreeSet::new();
@@ -370,5 +479,102 @@ mod tests {
         let result = parse_map(Path::new("test.map"), input).unwrap();
         assert!(result.textures.contains("tex1"));
         assert!(result.textures.contains("tex2"));
+    }
+
+    const VMF_SAMPLE: &str = r#"
+versioninfo
+{
+	"editorversion" "400"
+	"mapversion" "1"
+}
+world
+{
+	"id" "1"
+	"classname" "worldspawn"
+	solid
+	{
+		"id" "2"
+		side
+		{
+			"id" "3"
+			"plane" "(0 0 0) (1 0 0) (1 1 0)"
+			"material" "BRICK/BRICKWALL01"
+			"uaxis" "[1 0 0 0] 0.25"
+		}
+		side
+		{
+			"id" "4"
+			"plane" "(0 0 1) (1 0 1) (1 1 1)"
+			"material" "TOOLS/TOOLSNODRAW"
+			"uaxis" "[1 0 0 0] 0.25"
+		}
+	}
+}
+entity
+{
+	"id" "5"
+	"classname" "info_level_metadata"
+	"map_id" "vmf_test"
+	"level_name" "VMF Test"
+	"level_creator" "Author"
+	"level_description" "desc"
+	"game_mode" "std"
+	"checkpoints" "1"
+	solid
+	{
+		"id" "6"
+		side
+		{
+			"id" "7"
+			"plane" "(0 0 0) (1 0 0) (0 0 1)"
+			"material" "+0LAVA"
+			"uaxis" "[1 0 0 0] 0.25"
+		}
+	}
+}
+entity
+{
+	"id" "8"
+	"classname" "trigger_checkpoint"
+	"origin" "0 0 64"
+}
+"#;
+
+    #[test]
+    fn test_vmf_materials_and_metadata() {
+        let result = parse_map(Path::new("test.vmf"), VMF_SAMPLE).unwrap();
+        // World solid + brush-entity solid both extracted; tools/ skipped.
+        assert!(result.textures.contains("BRICK/BRICKWALL01"));
+        assert!(result.textures.contains("+0LAVA"));
+        assert!(!result.textures.iter().any(|t| t.to_lowercase().starts_with("tools/")));
+        let meta = result.metadata.expect("metadata entity");
+        assert_eq!(meta.map_id, "vmf_test");
+        assert_eq!(result.checkpoint_count, 1);
+    }
+
+    #[test]
+    fn test_vmf_extension_dispatch() {
+        // Same bytes as .map must NOT yield VMF materials (Quake faces
+        // don't exist in VMF; only `"material"` keys count there).
+        let result = parse_map(Path::new("test.map"), VMF_SAMPLE).unwrap();
+        assert!(result.textures.is_empty());
+    }
+
+    #[test]
+    fn test_vmf_duplicate_metadata_fails() {
+        let input = r#"
+entity
+{
+	"classname" "info_level_metadata"
+	"map_id" "a"
+}
+entity
+{
+	"classname" "info_level_metadata"
+	"map_id" "b"
+}
+"#;
+        let result = parse_map(Path::new("x.vmf"), input);
+        assert!(matches!(result, Err(CompileError::DuplicateMetadata)));
     }
 }

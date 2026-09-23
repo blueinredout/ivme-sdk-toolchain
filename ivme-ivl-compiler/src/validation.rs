@@ -1,10 +1,8 @@
 use crate::error::CompileError;
 use crate::metadata::{LevelMetadata, RECOGNIZED_GAME_MODES, validate_metadata};
-use crate::textures::TextureResolution;
 
 pub struct ValidationResult {
     pub metadata: LevelMetadata,
-    pub texture_resolution: TextureResolution,
     pub checkpoint_count: i32,
     pub warnings: Vec<String>,
 }
@@ -12,7 +10,6 @@ pub struct ValidationResult {
 pub fn validate_all(
     metadata: Option<LevelMetadata>,
     checkpoint_count: i32,
-    texture_resolution: TextureResolution,
 ) -> Result<ValidationResult, CompileError> {
     let meta = metadata.ok_or(CompileError::NoMetadataEntity)?;
     validate_metadata(&meta)?;
@@ -37,7 +34,6 @@ pub fn validate_all(
 
     Ok(ValidationResult {
         metadata: meta,
-        texture_resolution,
         checkpoint_count,
         warnings,
     })
@@ -46,15 +42,6 @@ pub fn validate_all(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::BTreeMap;
-
-    fn empty_texture_res() -> TextureResolution {
-        TextureResolution {
-            base: BTreeMap::new(),
-            pbr: BTreeMap::new(),
-            missing: Vec::new(),
-        }
-    }
 
     fn make_meta(map_id: &str, game_mode: &str, checkpoints: i32) -> LevelMetadata {
         LevelMetadata {
@@ -69,13 +56,13 @@ mod tests {
 
     #[test]
     fn test_no_metadata_fails() {
-        let result = validate_all(None, 0, empty_texture_res());
+        let result = validate_all(None, 0);
         assert!(matches!(result, Err(CompileError::NoMetadataEntity)));
     }
 
     #[test]
     fn test_valid_metadata() {
-        let result = validate_all(Some(make_meta("test", "std", 0)), 0, empty_texture_res());
+        let result = validate_all(Some(make_meta("test", "std", 0)), 0);
         assert!(result.is_ok());
         let v = result.unwrap();
         assert!(v.warnings.is_empty());
@@ -83,14 +70,14 @@ mod tests {
 
     #[test]
     fn test_checkpoint_mismatch() {
-        let result = validate_all(Some(make_meta("test", "std", 5)), 3, empty_texture_res());
+        let result = validate_all(Some(make_meta("test", "std", 5)), 3);
         assert!(result.is_ok());
         assert!(!result.unwrap().warnings.is_empty());
     }
 
     #[test]
     fn test_unknown_game_mode() {
-        let result = validate_all(Some(make_meta("test", "unknown_mode", 0)), 0, empty_texture_res());
+        let result = validate_all(Some(make_meta("test", "unknown_mode", 0)), 0);
         assert!(result.is_ok());
         let v = result.unwrap();
         assert!(v.warnings.iter().any(|w| w.contains("UNKNOWN_GAME_MODE")));
@@ -99,7 +86,7 @@ mod tests {
     #[test]
     fn test_recognized_game_modes() {
         for mode in RECOGNIZED_GAME_MODES {
-            let result = validate_all(Some(make_meta("test", mode, 0)), 0, empty_texture_res());
+            let result = validate_all(Some(make_meta("test", mode, 0)), 0);
             assert!(result.is_ok(), "Mode {} should be recognized", mode);
         }
     }

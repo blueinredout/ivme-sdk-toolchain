@@ -58,7 +58,7 @@ fn test_happy_path_compilation() {
     assert_eq!(code, 0, "Expected exit code 0, got {}. Stderr: {}", code, stderr);
     assert!(stdout.contains("Compiled successfully"));
     assert!(stdout.contains("map_id:       happy_level"));
-    assert!(stdout.contains("Textures: 2 files (2 base + 0 PBR)"));
+    assert!(stdout.contains("Textures: 2 files (2 sets)"));
     assert!(output.exists(), "Output .ivl should exist");
     
     // Verify ZIP contents
@@ -71,7 +71,8 @@ fn test_happy_path_compilation() {
     
     assert!(file_names.contains(&"level.map".to_string()), "level.map should be in archive");
     assert!(file_names.contains(&"preview.png".to_string()), "preview.png should be in archive");
-    assert!(file_names.iter().any(|n| n.starts_with("textures/custom/")), "textures should be in archive");
+    assert!(file_names.iter().any(|n| n.starts_with("textures/")), "textures should be in archive");
+    assert!(!file_names.iter().any(|n| n.strip_prefix("textures/").map(|r| r.contains('/')).unwrap_or(false)), "textures/ must be flat");
     
     // Verify level.map bytes match original
     let original_bytes = fs::read(&map).unwrap();
@@ -169,9 +170,88 @@ fn test_orphaned_texture_warning() {
     let _ = fs::remove_file(&output);
 }
 
+const VMF_LEVEL: &str = r#"versioninfo
+{
+	"editorversion" "400"
+	"mapversion" "1"
+}
+world
+{
+	"id" "1"
+	"classname" "worldspawn"
+	solid
+	{
+		"id" "2"
+		side
+		{
+			"id" "3"
+			"plane" "(0 0 0) (1 0 0) (1 1 0)"
+			"material" "vmf_wood"
+			"uaxis" "[1 0 0 0] 0.25"
+		}
+	}
+}
+entity
+{
+	"id" "4"
+	"classname" "info_level_metadata"
+	"map_id" "vmf_level"
+	"level_name" "VMF Level"
+	"level_creator" "Tester"
+	"level_description" "vmf test"
+	"game_mode" "std"
+	"checkpoints" "0"
+}
+"#;
+
 #[test]
-fn test_invalid_map_path() {
-    let (_stdout, _stderr, code) = run_compiler(&[
+fn test_vmf_compilation() {
+    let dir = fixtures_dir().join("vmf_level");
+    fs::create_dir_all(dir.join("textures")).ok();
+    fs::write(dir.join("level.vmf"), VMF_LEVEL).unwrap();
+    create_minimal_png(&dir.join("textures/vmf_wood.png"));
+    let output = dir.join("output.ivl");
+    let _ = fs::remove_file(&output);
+
+    let (stdout, stderr, code) = run_compiler(&[
+        "--map", dir.join("level.vmf").to_str().unwrap(),
+        "--output", output.to_str().unwrap(),
+    ]);
+
+    assert_eq!(code, 0, "Expected exit code 0, got {}. Stderr: {}", code, stderr);
+    assert!(stdout.contains("Compiled successfully"));
+
+    let file = fs::File::open(&output).unwrap();
+    let mut archive = zip::ZipArchive::new(file).unwrap();
+    let mut file_names = Vec::new();
+    for i in 0..archive.len() {
+        file_names.push(archive.by_index(i).unwrap().name().to_string());
+    }
+    assert!(file_names.contains(&"level.vmf".to_string()), "level.vmf should be in archive, got {:?}", file_names);
+    assert!(!file_names.contains(&"level.map".to_string()), "level.map must NOT be in archive");
+    assert!(file_names.contains(&"textures/vmf_wood.png".to_string()), "texture should be flat in archive");
+
+    let _ = fs::remove_file(&output);
+}
+
+#[test]
+fn test_unsupported_extension() {
+    let dir = fixtures_dir().join("vmf_level");
+    fs::create_dir_all(&dir).ok();
+    let fake = dir.join("level.txt");
+    fs::write(&fake, "hello").unwrap();
+
+    let (_stdout, stderr, code) = run_compiler(&[
+        "--map", fake.to_str().unwrap(),
+    ]);
+
+    assert_eq!(code, 1);
+    assert!(stderr.contains("Unsupported map format"), "got: {}", stderr);
+    let _ = fs::remove_file(&fake);
+}
+
+#[test]
+fn test_invalid_map_path() {    let (_stdout, _stderr, code) = run_compiler(&[
         "--map", "nonexistent/level.map",
     ]);
     

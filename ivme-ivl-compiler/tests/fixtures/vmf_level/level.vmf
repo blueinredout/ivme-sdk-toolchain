@@ -1,0 +1,32 @@
+versioninfo
+{
+	"editorversion" "400"
+	"mapversion" "1"
+}
+world
+{
+	"id" "1"
+	"classname" "worldspawn"
+	solid
+	{
+		"id" "2"
+		side
+		{
+			"id" "3"
+			"plane" "(0 0 0) (1 0 0) (1 1 0)"
+			"material" "vmf_wood"
+			"uaxis" "[1 0 0 0] 0.25"
+		}
+	}
+}
+entity
+{
+	"id" "4"
+	"classname" "info_level_metadata"
+	"map_id" "vmf_level"
+	"level_name" "VMF Level"
+	"level_creator" "Tester"
+	"level_description" "vmf test"
+	"game_mode" "std"
+	"checkpoints" "0"
+}

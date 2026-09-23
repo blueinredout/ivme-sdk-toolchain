@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -8,14 +8,20 @@ use colored::Colorize;
 use image::imageops::FilterType;
 use image::{GenericImageView, RgbaImage};
 
-/// wadgen: folder-list txt -> WAD3 (JACK / Hammer / TrenchBroom / func_godot)
+/// wadgen: textures dir (or folder-list txt) -> WAD3 (JACK / Hammer / func_godot)
 #[derive(Parser, Debug)]
-#[command(name = "wadgen", version)]
+#[command(name = "wadgen", version, arg_required_else_help = true)]
 struct Cli {
-    /// Path to the .txt list file (one folder per line, non-recursive)
-    list_file: PathBuf,
+    /// Input texture directory (recursive, flattened) OR .txt list file
+    /// (one folder per line, non-recursive per folder). A directory is the
+    /// normal case: `wadgen mymap/textures`. A `.txt` file selects the
+    /// advanced multi-folder mode, which merges several folders into ONE
+    /// wad so the `_N` collision walk sees them all.
+    input: PathBuf,
 
-    /// Output .wad path. Default: same folder as list file, same stem + .wad
+    /// Output .wad path. Defaults: dir mode -> `<dir>.wad` as a sibling of
+    /// the input dir (lands next to the .map for the standard layout);
+    /// list mode -> same folder as the list file, same stem + .wad.
     #[arg(short, long)]
     output: Option<PathBuf>,
 
@@ -51,18 +57,57 @@ const SKIP_SUFFIXES: &[&str] = &[
     "rough",
 ];
 
-const SPECIAL_PREFIXES: &[char] = &['{', '!', '+', '~', '-'];
 
 struct ParsedName {
-    /// long base without PBR suffix, lowercase, no leading special. e.g. "metal_test"
+    /// long base without PBR suffix and without anim/special prefixes,
+    /// lowercase. e.g. "metal_test", "lava" (from "+0lava_albedo").
     long_base: String,
     surface_letter: char,
     /// sanitized upper core without surface. e.g. "TEST", "BRICKWALL01"
     core: String,
-    /// leading special from source filename, if any
+    /// leading special from source filename, if any ('{', '!', '~', '-').
+    /// '+' is never stored here; it becomes `anim_frame`.
     special: Option<char>,
+    /// animation frame 0..=255 from a `+NNN` prefix, if any.
+    anim_frame: Option<u32>,
     /// false => skip this file for WAD (PBR aux)
     pack: bool,
+}
+
+/// Strict loose-stem rule (bake fails LOUD upstream in ivlc; wadgen skips +
+/// logs loudly here). Allows an optional single special prefix paris:
+/// `{` (transparent), `!`/`~`/`-` (GoldSrc flags), or `+NNN` (anim frame
+/// 0..255, 1-3 digits), plus the `{+NNN` transparent-animated combo.
+/// Body must be 1..64 ASCII alphanumerics/underscores.
+fn valid_loose_stem(stem: &str) -> bool {
+    if stem.is_empty() || stem.len() > 80 {
+        return false;
+    }
+    let mut s = stem;
+    // optional transparent brace
+    if let Some(rest) = s.strip_prefix('{') {
+        s = rest;
+    }
+    // optional anim prefix +NNN
+    if let Some(rest) = s.strip_prefix('+') {
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if digits.is_empty() || digits.len() > 3 {
+            return false;
+        }
+        if digits.parse::<u32>().map(|n| n > 255).unwrap_or(true) {
+            return false;
+        }
+        s = &rest[digits.len()..];
+    } else if let Some(c) = s.chars().next() {
+        if matches!(c, '!' | '~' | '-') {
+            s = &s[1..];
+        }
+    }
+    if s.is_empty() || s.len() > 64 {
+        return false;
+    }
+    s.bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
 fn sanitize_core(raw_upper: &str) -> String {
@@ -95,10 +140,42 @@ fn sanitize_core(raw_upper: &str) -> String {
 
 fn parse_file_stem(stem: &str) -> ParsedName {
     let lower = stem.to_lowercase();
-    let (special, mut rest) = match lower.chars().next() {
-        Some(c) if SPECIAL_PREFIXES.contains(&c) => (Some(c), lower[1..].to_string()),
-        _ => (None, lower.clone()),
-    };
+    let mut s = lower.as_str();
+    let mut brace = false;
+    // Optional transparent brace (may combine: `{+12foo`).
+    if let Some(rest) = s.strip_prefix('{') {
+        brace = true;
+        s = rest;
+    }
+    // Optional animation prefix `+NNN` (frame 0..255).
+    let mut anim_frame: Option<u32> = None;
+    let mut special: Option<char> = None;
+    if let Some(rest) = s.strip_prefix('+') {
+        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+        if !digits.is_empty() && digits.len() <= 3 {
+            if let Ok(n) = digits.parse::<u32>() {
+                if n <= 255 {
+                    anim_frame = Some(n);
+                    s = &rest[digits.len()..];
+                }
+            }
+        }
+        // A '+' not followed by 0..255 digits is invalid under the strict
+        // rule; callers skip such files before reaching here. Fall through
+        // with the '+' treated as dropped so output stays deterministic.
+        if anim_frame.is_none() {
+            s = rest;
+        }
+    } else if let Some(c) = s.chars().next() {
+        if matches!(c, '!' | '~' | '-') {
+            special = Some(c);
+            s = &s[1..];
+        }
+    }
+    if brace {
+        special = Some('{');
+    }
+    let mut rest = s.to_string();
     if rest.is_empty() {
         rest = "tex".to_string();
     }
@@ -148,32 +225,37 @@ fn parse_file_stem(stem: &str) -> ParsedName {
         surface_letter,
         core,
         special,
+        anim_frame,
         pack,
     }
 }
 
 /// Build the pre-collision short base (<=15 chars before _N dedup).
-/// Transparent forces '{' prefix. Otherwise preserves source ! + ~ - prefix.
+/// Layout: [{][+NNN][!/~/‑]LETTER_CORE, core truncated to fit.
+/// Transparency forces '{' prefix. Animation frame digits are part of the
+/// prefix so they survive truncation (frames of one set stay distinct).
 fn build_base(parsed: &ParsedName, has_transparency: bool) -> String {
-    let stem = format!("{}_{}", parsed.surface_letter, parsed.core);
-    let with_special = if has_transparency || parsed.special == Some('{') {
-        format!("{{{stem}")
-    } else if let Some(c) = parsed.special {
-        if c == '+' {
-            // '+' is an animation-frame prefix in GoldSrc; for a reference
-            // pack keep it simple and drop it (warned by caller).
-            stem
-        } else {
-            format!("{c}{stem}")
-        }
-    } else {
-        stem
-    };
-    if with_special.len() <= 15 {
-        with_special
-    } else {
-        with_special[..15].to_string()
+    let mut prefix = String::new();
+    if has_transparency || parsed.special == Some('{') {
+        prefix.push('{');
     }
+    if let Some(f) = parsed.anim_frame {
+        prefix.push('+');
+        prefix.push_str(&f.to_string());
+    }
+    if let Some(c) = parsed.special {
+        if c != '{' {
+            prefix.push(c);
+        }
+    }
+    let stem = format!("{}_{}", parsed.surface_letter, parsed.core);
+    let budget = 15usize.saturating_sub(prefix.len());
+    let stem_t = if stem.len() > budget {
+        &stem[..budget]
+    } else {
+        &stem
+    };
+    format!("{prefix}{stem_t}")
 }
 
 /// Make unique within 15 chars: BASE, BASE_1, BASE_2 ... (sorted processing
@@ -471,55 +553,132 @@ fn main() -> Result<()> {
         bail!("--max-size must be a multiple of 16 between 16 and 1024 (got {})", cli.max_size);
     }
 
-    let list_path = cli.list_file.clone();
-    let list_dir = list_path
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."));
-    let list_text = fs::read_to_string(&list_path)
-        .with_context(|| format!("reading list file {}", list_path.display()))?;
-    let list_text = list_text.trim_start_matches('\u{FEFF}');
+    // ---- input dispatch: directory (recursive, normal case) vs list file ----
+    let is_dir = cli.input.is_dir();
+    // Default output naming base: dir mode -> sibling `<dirname>.wad`
+    // (lands next to the .map for the standard layout); list mode ->
+    // same folder as the list file, same stem + .wad (legacy behavior).
+    let (base_dir, default_stem): (PathBuf, String) = if is_dir {
+        let parent = cli
+            .input
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        let stem = cli
+            .input
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("pack")
+            .to_string();
+        (parent, stem)
+    } else {
+        let d = cli
+            .input
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("."));
+        let s = cli
+            .input
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("pack")
+            .to_string();
+        (d, s)
+    };
 
-    let mut dirs: Vec<PathBuf> = vec![];
-    for (lineno, raw) in list_text.lines().enumerate() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
-            continue;
-        }
-        let p = PathBuf::from(line);
-        let resolved = if p.is_absolute() {
-            p
-        } else {
-            list_dir.join(p)
-        };
-        if !resolved.is_dir() {
-            eprintln!(
-                "{} line {}: not a directory, skipping: {}",
-                "error".red().bold(),
-                lineno + 1,
-                resolved.display()
+    struct DirJob {
+        dir: PathBuf,
+        recursive: bool,
+    }
+
+    // Fail fast: an --output pointing at a directory dies here instead of
+    // after the whole tree walk with a raw OS error.
+    if let Some(ref p) = cli.output {
+        if p.is_dir() {
+            bail!(
+                "--output {} is a directory; give a file path like {}",
+                p.display(),
+                p.join("ivme.wad").display()
             );
-            continue;
         }
-        dirs.push(resolved);
-    }
-    if dirs.is_empty() {
-        bail!("no valid directories in {}", list_path.display());
     }
 
-    // Non-recursive collect of png/tga only.
+    let mut jobs: Vec<DirJob> = vec![];
+    if is_dir {
+        jobs.push(DirJob {
+            dir: cli.input.clone(),
+            recursive: true,
+        });
+    } else {
+        let list_text = fs::read_to_string(&cli.input)
+            .with_context(|| format!("reading list file {}", cli.input.display()))?;
+        let list_text = list_text.trim_start_matches('\u{FEFF}');
+        for (lineno, raw) in list_text.lines().enumerate() {
+            let line = raw.trim();
+            if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+                continue;
+            }
+            let p = PathBuf::from(line);
+            let resolved = if p.is_absolute() {
+                p
+            } else {
+                base_dir.join(p)
+            };
+            if !resolved.is_dir() {
+                eprintln!(
+                    "{} line {}: not a directory, skipping: {}",
+                    "error".red().bold(),
+                    lineno + 1,
+                    resolved.display()
+                );
+                continue;
+            }
+            jobs.push(DirJob {
+                dir: resolved,
+                recursive: false,
+            });
+        }
+    }
+    if jobs.is_empty() {
+        if is_dir {
+            bail!("input directory not found: {}", cli.input.display());
+        } else {
+            bail!("no valid directories in {}", cli.input.display());
+        }
+    }
+
+    fn walk_dir(dir: &Path, recursive: bool, out: &mut Vec<PathBuf>) -> Result<()> {
+        let entries =
+            fs::read_dir(dir).with_context(|| format!("reading dir {}", dir.display()))?;
+        // Sort entries for deterministic traversal across platforms.
+        let mut paths: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+        paths.sort_by(|a, b| {
+            a.to_string_lossy()
+                .to_lowercase()
+                .cmp(&b.to_string_lossy().to_lowercase())
+        });
+        for path in paths {
+            if path.is_dir() {
+                if recursive {
+                    walk_dir(&path, true, out)?;
+                }
+                continue;
+            }
+            if path.is_file() {
+                out.push(path);
+            }
+        }
+        Ok(())
+    }
+
+    // Collect png/tga, strict stem validation (loud skip), PBR-aux skip.
     let mut pending: Vec<Pending> = vec![];
     let mut skipped_aux = 0u32;
-    for dir in dirs.iter() {
-        let entries = fs::read_dir(dir)
-            .with_context(|| format!("reading dir {}", dir.display()))?;
-        for ent in entries {
-            let ent = ent?;
-            let ft = ent.file_type()?;
-            if !ft.is_file() {
-                continue; // non-recursive: ignore subdirectories
-            }
-            let path = ent.path();
+    let mut invalid_names = 0u32;
+    for job in jobs.iter() {
+        let mut files: Vec<PathBuf> = vec![];
+        walk_dir(&job.dir, job.recursive, &mut files)?;
+        for path in files {
             let ext = path
                 .extension()
                 .and_then(|e| e.to_str())
@@ -533,6 +692,15 @@ fn main() -> Result<()> {
                 .and_then(|s| s.to_str())
                 .unwrap_or("tex")
                 .to_string();
+            if !valid_loose_stem(&stem) {
+                invalid_names += 1;
+                eprintln!(
+                    "{} {}: invalid name (want optional {{/!/~/-[+NNN frame 0..255] + [A-Za-z0-9_]{{1,64}}), skipping",
+                    "error".red().bold(),
+                    path.display()
+                );
+                continue;
+            }
             let parsed = parse_file_stem(&stem);
             if !parsed.pack {
                 skipped_aux += 1;
@@ -551,9 +719,56 @@ fn main() -> Result<()> {
         }
     }
     if pending.is_empty() {
-        bail!("no packable png/tga found ({} PBR aux files ignored)", skipped_aux);
+        bail!(
+            "no packable png/tga found ({} PBR aux ignored, {} invalid names)",
+            skipped_aux, invalid_names
+        );
     }
-    // Deterministic order so _1/_2 collisions match the engine script.
+    // Frame-0-only for animation sets: group anim files by long_base, keep
+    // the pack files of the lowest frame number, skip higher frames
+    // (runtime-only; JACK shows frame 0, the game animates loose files).
+    // Non-anim files are unaffected (albedo+diffuse dupes still pack as
+    // BASE, BASE_1 via the collision walk below).
+    {
+        let mut by_base: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+        for (i, p) in pending.iter().enumerate() {
+            if p.parsed.anim_frame.is_some() {
+                by_base.entry(p.parsed.long_base.clone()).or_default().push(i);
+            }
+        }
+        let mut skip_idx: HashSet<usize> = HashSet::new();
+        for (base, idxs) in by_base.iter() {
+            let min_frame: u32 = idxs
+                .iter()
+                .map(|&i| pending[i].parsed.anim_frame.unwrap_or(0))
+                .min()
+                .unwrap_or(0);
+            for &i in idxs {
+                let f = pending[i].parsed.anim_frame.unwrap_or(0);
+                if f != min_frame {
+                    skip_idx.insert(i);
+                    println!(
+                        "  {} {} (anim frame {} of '{}', WAD packs frame {} only)",
+                        "skip".cyan(),
+                        pending[i].source.display(),
+                        f,
+                        base,
+                        min_frame
+                    );
+                }
+            }
+        }
+        if !skip_idx.is_empty() {
+            let mut kept = Vec::with_capacity(pending.len() - skip_idx.len());
+            for (i, p) in pending.into_iter().enumerate() {
+                if !skip_idx.contains(&i) {
+                    kept.push(p);
+                }
+            }
+            pending = kept;
+        }
+    }
+    // Deterministic order so _1/_2 collisions are stable.
     pending.sort_by(|a, b| {
         a.source
             .to_string_lossy()
@@ -561,13 +776,9 @@ fn main() -> Result<()> {
             .cmp(&b.source.to_string_lossy().to_lowercase())
     });
 
-    let stem_name = list_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("pack");
     let wad_path = match cli.output {
         Some(p) => p,
-        None => list_dir.join(format!("{stem_name}.wad")),
+        None => base_dir.join(format!("{default_stem}.wad")),
     };
     let csv_path = {
         // foo.wad -> foo.mapping.csv ; foo (no ext) -> foo.mapping.csv
@@ -595,7 +806,7 @@ fn main() -> Result<()> {
                 image::imageops::resize(&img.to_rgba8(), nw, nh, FilterType::Lanczos3);
             eprintln!(
                 "{} {}: {}x{} -> {}x{} (aspect preserved, multiple-of-16)",
-                "warning".yellow().bold(),
+                "info".cyan(),
                 p.stem,
                 ow,
                 oh,
@@ -681,13 +892,6 @@ fn main() -> Result<()> {
         }
 
         let base15 = build_base(&p.parsed, has_alpha);
-        if p.parsed.special == Some('+') {
-            eprintln!(
-                "{} {}: '+' animation prefix dropped for reference pack",
-                "warning".yellow().bold(),
-                p.stem
-            );
-        }
         let final_name = make_unique(&base15, &mut used);
         if final_name != base15 {
             eprintln!(
