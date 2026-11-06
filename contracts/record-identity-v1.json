@@ -1,0 +1,188 @@
+{
+  "schema_version": 1,
+  "name": "ivme-record-identity-v1",
+  "content_hash": {
+    "version": 1,
+    "algorithm": "SHA-256",
+    "domain_tag_hex": "49564d452d434f4e54454e5400",
+    "byte_order": "little-endian",
+    "layout": [
+      "domain_tag",
+      "u32(version)",
+      "u32(payload_file_count)",
+      "for each payload file in ASCII path-byte order: u32(path_byte_length), path_bytes, u64(uncompressed_byte_length), SHA256(file_bytes)[32]"
+    ]
+  },
+  "package": {
+    "ivl_schema_version": 1,
+    "manifest_path": "ivl-manifest.json",
+    "manifest_fields": [
+      "ivl_schema_version",
+      "content_hash_version",
+      "level_uuid",
+      "content_hash",
+      "files"
+    ],
+    "file_fields": [
+      "path",
+      "size_bytes",
+      "sha256"
+    ],
+    "map_sources": [
+      "level.map",
+      "level.vmf"
+    ],
+    "map_source_count": 1,
+    "optional_payload": [
+      "mapping.csv"
+    ],
+    "texture_root": "textures/",
+    "texture_extensions_case_insensitive": [
+      "png",
+      "tga"
+    ],
+    "excluded_listing_files": [
+      "preview.png",
+      "icon.png"
+    ],
+    "other_exclusions": [
+      "ivl-manifest.json"
+    ],
+    "unknown_files": "reject",
+    "directory_entries": "validate then exclude from hash; reject duplicate or file collisions",
+    "symlinks": "reject",
+    "encrypted_entries": "reject",
+    "hash_exact_packaged_buffers": true
+  },
+  "paths": {
+    "encoding": "ASCII",
+    "min_byte": 32,
+    "max_byte": 126,
+    "separator": "/",
+    "preserve_case": true,
+    "collision_casefold": "ASCII lowercase",
+    "reject_characters": [
+      "\\",
+      ":",
+      "\"",
+      "<",
+      ">",
+      "|",
+      "?",
+      "*"
+    ],
+    "reject_empty": true,
+    "reject_leading_separator": true,
+    "reject_empty_segments": true,
+    "reject_dot_segments": true,
+    "reject_segment_trailing_dot_or_space": true,
+    "reserved_device_stems_case_insensitive": [
+      "CON",
+      "PRN",
+      "AUX",
+      "NUL",
+      "COM1",
+      "COM2",
+      "COM3",
+      "COM4",
+      "COM5",
+      "COM6",
+      "COM7",
+      "COM8",
+      "COM9",
+      "LPT1",
+      "LPT2",
+      "LPT3",
+      "LPT4",
+      "LPT5",
+      "LPT6",
+      "LPT7",
+      "LPT8",
+      "LPT9"
+    ],
+    "fixed_root_names_case_sensitive": true,
+    "strip_one_trailing_slash_for_zip_directory_marker": true
+  },
+  "source_metadata": {
+    "schema_version": 1,
+    "fields": [
+      "metadata_schema_version",
+      "level_uuid",
+      "bronze_time_ms",
+      "silver_time_ms",
+      "gold_time_ms"
+    ],
+    "uuid": "canonical lowercase hyphenated hexadecimal; persistent; compiler initialization only",
+    "target_max": 2147483647,
+    "all_absent_or_all_zero": "unconfigured",
+    "partial_or_zero_positive_mixture": "invalid",
+    "configured_order": "0 < gold_time_ms < silver_time_ms < bronze_time_ms",
+    "numeric_source": "trim ASCII decimal digits only; leading zeroes accepted; no signs, decimals, exponents, booleans or overflow",
+    "client_invalid_medals": "diagnostics and unavailable medals without invalidating otherwise valid local identity",
+    "compiler_invalid_medals": "reject",
+    "author_time": "derived only; unavailable in Phase 2",
+    "game_modes": [
+      "std",
+      "pg",
+      "fz"
+    ],
+    "reserved_ugc_modes": [
+      "hub"
+    ],
+    "metadata_entity_count": 1
+  },
+  "errors": {
+    "invalid_path": "INVALID_PATH",
+    "duplicate_path": "DUPLICATE_PATH",
+    "case_collision": "CASE_COLLISION",
+    "unsupported_file": "UNSUPPORTED_FILE",
+    "invalid_package": "INVALID_PACKAGE",
+    "unsupported_schema": "UNSUPPORTED_SCHEMA",
+    "payload_mismatch": "PAYLOAD_MISMATCH",
+    "rebuild_required": "REBUILD_REQUIRED",
+    "invalid_metadata": "INVALID_METADATA"
+  },
+  "records": {
+    "storage_schema_version": 1,
+    "profile": "identified Steam ID string only",
+    "scope": [
+      "provenance",
+      "level_uuid",
+      "release_id",
+      "content_hash_version",
+      "content_hash",
+      "ruleset_id",
+      "game_mode",
+      "store_epoch",
+      "generation"
+    ],
+    "local_return_to_old_content": "fresh generation",
+    "server_preference": "matching server PB first; local fallback",
+    "editor_progress": false,
+    "attempt_count": "once at GO; abandoned/invalidated counted; no checkpoint reset count",
+    "replay_version": 3,
+    "replay_signed_payload": "SHA256(keyframes_bytes || tick_data_bytes)"
+  },
+  "service": {
+    "resolve": "POST /api/records/resolve",
+    "scores": "GET /api/records/challenges/{challengeId}/scores",
+    "pb": "GET /api/records/challenges/{challengeId}/users/{steamId}/pb",
+    "course_challenges": "GET /api/records/courses/{courseId}/challenges",
+    "player_current_pbs": "GET /api/records/users/{steamId}/pbs?scope=current",
+    "staff_compatibility": "GET /api/admin/records/compatibility",
+    "staff_create_build": "POST /api/admin/records/builds",
+    "staff_update_build": "PUT /api/admin/records/builds/{buildId}",
+    "staff_current_challenge": "PUT /api/admin/records/current-challenges",
+    "racing_start_field": "recordChallengeId",
+    "submit_fields": [
+      "recordChallengeId",
+      "clientRunId"
+    ],
+    "session_context_key": [
+      "tenantId",
+      "authenticated MatchId"
+    ],
+    "admission": "registered enabled build -> immutable ruleset; no version floors or run migration",
+    "current_board": "explicit official course/mode -> registered challenge pointer"
+  }
+}

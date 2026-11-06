@@ -1,0 +1,296 @@
+{
+  "schema_version": 1,
+  "vectors": [
+    {
+      "name": "empty",
+      "kind": "hash",
+      "files": [],
+      "encoded_hex": "49564d452d434f4e54454e54000100000000000000",
+      "sha256": "57ef441c0ede38d2e22ae11cdc656b6e5ed936583ca8902675eb425148c377be"
+    },
+    {
+      "name": "one",
+      "kind": "hash",
+      "files": [
+        {
+          "path": "level.map",
+          "bytes_base64": "YWJj"
+        }
+      ],
+      "encoded_hex": "49564d452d434f4e54454e54000100000001000000090000006c6576656c2e6d61700300000000000000ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+      "sha256": "c3b834b905f12987902cbdd08130cc135949c15e804252278964c5fb6be23db9"
+    },
+    {
+      "name": "two",
+      "kind": "hash",
+      "files": [
+        {
+          "path": "mapping.csv",
+          "bytes_base64": ""
+        },
+        {
+          "path": "level.map",
+          "bytes_base64": "YWJj"
+        }
+      ],
+      "encoded_hex": "49564d452d434f4e54454e54000100000002000000090000006c6576656c2e6d61700300000000000000ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad0b0000006d617070696e672e6373760000000000000000e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha256": "437681d6b0ca9f307d517e1af7e144020aab38d471676fb84d1f195f41cae35c"
+    },
+    {
+      "name": "changed",
+      "kind": "hash",
+      "files": [
+        {
+          "path": "level.map",
+          "bytes_base64": "YWJk"
+        }
+      ],
+      "encoded_hex": "49564d452d434f4e54454e54000100000001000000090000006c6576656c2e6d61700300000000000000a52d159f262b2c6ddb724a61840befc36eb30c88877a4030b65cbe86298449c9",
+      "sha256": "d5272acca52e1846179c7bfb27641d317abb6b3f6193f8f23fc6dc622dd62cfc"
+    },
+    {
+      "name": "two_reordered",
+      "kind": "hash",
+      "files": [
+        {
+          "path": "level.map",
+          "bytes_base64": "YWJj"
+        },
+        {
+          "path": "mapping.csv",
+          "bytes_base64": ""
+        }
+      ],
+      "encoded_hex": "49564d452d434f4e54454e54000100000002000000090000006c6576656c2e6d61700300000000000000ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad0b0000006d617070696e672e6373760000000000000000e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "sha256": "437681d6b0ca9f307d517e1af7e144020aab38d471676fb84d1f195f41cae35c"
+    },
+    {
+      "name": "reject_traversal",
+      "kind": "paths",
+      "files": [
+        {
+          "path": "../level.map",
+          "bytes_base64": ""
+        }
+      ],
+      "expected_error": "INVALID_PATH"
+    },
+    {
+      "name": "reject_absolute",
+      "kind": "paths",
+      "files": [
+        {
+          "path": "/level.map",
+          "bytes_base64": ""
+        }
+      ],
+      "expected_error": "INVALID_PATH"
+    },
+    {
+      "name": "reject_drive",
+      "kind": "paths",
+      "files": [
+        {
+          "path": "C:/level.map",
+          "bytes_base64": ""
+        }
+      ],
+      "expected_error": "INVALID_PATH"
+    },
+    {
+      "name": "reject_backslash",
+      "kind": "paths",
+      "files": [
+        {
+          "path": "textures\\x.png",
+          "bytes_base64": ""
+        }
+      ],
+      "expected_error": "INVALID_PATH"
+    },
+    {
+      "name": "reject_empty",
+      "kind": "paths",
+      "files": [
+        {
+          "path": "",
+          "bytes_base64": ""
+        }
+      ],
+      "expected_error": "INVALID_PATH"
+    },
+    {
+      "name": "reject_empty_segment",
+      "kind": "paths",
+      "files": [
+        {
+          "path": "textures//x.png",
+          "bytes_base64": ""
+        }
+      ],
+      "expected_error": "INVALID_PATH"
+    },
+    {
+      "name": "reject_dot_segment",
+      "kind": "paths",
+      "files": [
+        {
+          "path": "textures/./x.png",
+          "bytes_base64": ""
+        }
+      ],
+      "expected_error": "INVALID_PATH"
+    },
+    {
+      "name": "reject_parent_segment",
+      "kind": "paths",
+      "files": [
+        {
+          "path": "textures/../x.png",
+          "bytes_base64": ""
+        }
+      ],
+      "expected_error": "INVALID_PATH"
+    },
+    {
+      "name": "reject_non_ascii",
+      "kind": "paths",
+      "files": [
+        {
+          "path": "textures/caf\u00e9.png",
+          "bytes_base64": ""
+        }
+      ],
+      "expected_error": "INVALID_PATH"
+    },
+    {
+      "name": "reject_control",
+      "kind": "paths",
+      "files": [
+        {
+          "path": "textures/\tx.png",
+          "bytes_base64": ""
+        }
+      ],
+      "expected_error": "INVALID_PATH"
+    },
+    {
+      "name": "reject_trailing_dot",
+      "kind": "paths",
+      "files": [
+        {
+          "path": "textures/x./a.png",
+          "bytes_base64": ""
+        }
+      ],
+      "expected_error": "INVALID_PATH"
+    },
+    {
+      "name": "reject_trailing_space",
+      "kind": "paths",
+      "files": [
+        {
+          "path": "textures/x /a.png",
+          "bytes_base64": ""
+        }
+      ],
+      "expected_error": "INVALID_PATH"
+    },
+    {
+      "name": "reject_device",
+      "kind": "paths",
+      "files": [
+        {
+          "path": "textures/CON.png",
+          "bytes_base64": ""
+        }
+      ],
+      "expected_error": "INVALID_PATH"
+    },
+    {
+      "name": "reject_device_number",
+      "kind": "paths",
+      "files": [
+        {
+          "path": "textures/com9.tga",
+          "bytes_base64": ""
+        }
+      ],
+      "expected_error": "INVALID_PATH"
+    },
+    {
+      "name": "reject_wildcard",
+      "kind": "paths",
+      "files": [
+        {
+          "path": "textures/x?.png",
+          "bytes_base64": ""
+        }
+      ],
+      "expected_error": "INVALID_PATH"
+    },
+    {
+      "name": "reject_quote",
+      "kind": "paths",
+      "files": [
+        {
+          "path": "textures/x\".png",
+          "bytes_base64": ""
+        }
+      ],
+      "expected_error": "INVALID_PATH"
+    },
+    {
+      "name": "reject_duplicate",
+      "kind": "paths",
+      "files": [
+        {
+          "path": "textures/x.png",
+          "bytes_base64": ""
+        },
+        {
+          "path": "textures/x.png",
+          "bytes_base64": ""
+        }
+      ],
+      "expected_error": "DUPLICATE_PATH"
+    },
+    {
+      "name": "reject_case_collision",
+      "kind": "paths",
+      "files": [
+        {
+          "path": "textures/A.png",
+          "bytes_base64": ""
+        },
+        {
+          "path": "textures/a.png",
+          "bytes_base64": ""
+        }
+      ],
+      "expected_error": "CASE_COLLISION"
+    },
+    {
+      "name": "reject_unknown_file",
+      "kind": "paths",
+      "files": [
+        {
+          "path": "readme.txt",
+          "bytes_base64": ""
+        }
+      ],
+      "expected_error": "UNSUPPORTED_FILE"
+    },
+    {
+      "name": "reject_texture_script",
+      "kind": "paths",
+      "files": [
+        {
+          "path": "textures/x.gd",
+          "bytes_base64": ""
+        }
+      ],
+      "expected_error": "UNSUPPORTED_FILE"
+    }
+  ]
+}
