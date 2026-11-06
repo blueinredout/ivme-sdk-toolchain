@@ -28,8 +28,43 @@ fn warn_yellow(msg: &str) {
     }
 }
 
+/// Format the current date as "MMM DD YYYY" (e.g. "Sep 23 2026").
+/// Uses SystemTime::now() with a manual days-since-epoch -> civil date
+/// conversion so no extra crates are needed.
+fn format_date() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let days = secs / 86400;
+    // Howard Hinnant's civil_from_days algorithm (epoch 1970-01-01).
+    let mut z = days as i64 + 719468i64;
+    let era = if z >= 0 { z } else { z - 146096 } / 146097;
+    let mut doe = z - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { year + 1 } else { year };
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let mi = (month - 1) as usize;
+    format!("{} {:02} {}", MONTHS[mi], day, year)
+}
+
 fn main() {
     let cli = Cli::parse();
+
+    println!(
+        "IVME Level Compiler - ivlc.exe ( {} )",
+        format_date()
+    );
+
     match run(cli) {
         Ok(()) => process::exit(0),
         Err(e) => {
@@ -176,6 +211,7 @@ fn run(cli: Cli) -> Result<(), CompileError> {
     let validation = validation::validate_all(
         parse_result.metadata,
         parse_result.checkpoint_count,
+        &parse_result.player_spawn_teams,
     )?;
 
     // 8. Emit validation warnings
@@ -225,7 +261,7 @@ fn run(cli: Cli) -> Result<(), CompileError> {
 
     // 12. Dry-run check
     if cli.dry_run {
-        println!("Validation successful: {}", validation.metadata.map_id);
+        println!("Validation successful: {}", validation.metadata.course_id);
         println!("  Textures: {} files ({} sets)", total_textures, resolution.sets);
         println!("  Mapping:  {}", if has_mapping { "included" } else { "absent" });
         println!("  Preview:  {}", if has_preview { "included" } else { "absent" });
@@ -252,7 +288,7 @@ fn run(cli: Cli) -> Result<(), CompileError> {
     let size_kb = size / 1024;
     println!("Compiled successfully: {}", output_path.file_name().unwrap_or_default().to_string_lossy());
     println!("  Metadata:");
-    println!("    map_id:       {}", validation.metadata.map_id);
+    println!("    course_id:    {}", validation.metadata.course_id);
     println!("    level_name:   {}", validation.metadata.level_name);
     println!("    creator:      {}", validation.metadata.level_creator);
     println!("    game_mode:    {}", validation.metadata.game_mode);

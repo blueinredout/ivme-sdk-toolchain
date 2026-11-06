@@ -8,6 +8,8 @@ pub struct ParseResult {
     pub metadata: Option<LevelMetadata>,
     pub textures: BTreeSet<String>,
     pub checkpoint_count: i32,
+    /// `team` value of every `info_player_start` (0 = any team).
+    pub player_spawn_teams: Vec<i32>,
 }
 
 pub fn parse_map(path: &Path, content: &str) -> Result<ParseResult, CompileError> {
@@ -33,6 +35,7 @@ fn parse_vmf(content: &str) -> Result<ParseResult, CompileError> {
 
     let mut metadata = None;
     let mut checkpoint_count = 0;
+    let mut player_spawn_teams = Vec::new();
     let mut textures = BTreeSet::new();
     let mut stack: Vec<String> = Vec::new();
     let mut pending: Option<String> = None;
@@ -52,7 +55,7 @@ fn parse_vmf(content: &str) -> Result<ParseResult, CompileError> {
                 pending.take();
                 trimmed[..trimmed.len() - 1].trim().to_lowercase()
             };
-            if name == "entity" {
+            if name == "entity" && stack.is_empty() {
                 entity_keys.clear();
             } else if name == "side" {
                 side_material = None;
@@ -78,6 +81,8 @@ fn parse_vmf(content: &str) -> Result<ParseResult, CompileError> {
                             }
                         } else if classname == "trigger_checkpoint" {
                             checkpoint_count += 1;
+                        } else if classname == "info_player_start" {
+                            player_spawn_teams.push(parse_spawn_team(&entity_keys));
                         }
                     }
                     entity_keys.clear();
@@ -110,6 +115,7 @@ fn parse_vmf(content: &str) -> Result<ParseResult, CompileError> {
         metadata,
         textures,
         checkpoint_count,
+        player_spawn_teams,
     })
 }
 
@@ -122,6 +128,7 @@ fn is_tool_material(m: &str) -> bool {
 pub fn parse_quake(_path: &Path, content: &str) -> Result<ParseResult, CompileError> {
     let mut metadata = None;
     let mut checkpoint_count = 0;
+    let mut player_spawn_teams = Vec::new();
     let mut textures = BTreeSet::new();
     let mut depth = 0;
     let mut in_entity = false;
@@ -154,6 +161,8 @@ pub fn parse_quake(_path: &Path, content: &str) -> Result<ParseResult, CompileEr
                                 }
                             } else if classname == "trigger_checkpoint" {
                                 checkpoint_count += 1;
+                            } else if classname == "info_player_start" {
+                                player_spawn_teams.push(parse_spawn_team(&entity_keys));
                             }
                         }
                         in_entity = false;
@@ -192,6 +201,7 @@ pub fn parse_quake(_path: &Path, content: &str) -> Result<ParseResult, CompileEr
         metadata,
         textures,
         checkpoint_count,
+        player_spawn_teams,
     })
 }
 
@@ -283,8 +293,14 @@ fn parse_brush_face_texture(line: &str) -> Option<String> {
     None
 }
 
+fn parse_spawn_team(keys: &std::collections::HashMap<String, String>) -> i32 {
+    keys.get("team")
+        .and_then(|v| v.trim().parse::<i32>().ok())
+        .unwrap_or(0)
+}
+
 fn extract_metadata(keys: &std::collections::HashMap<String, String>) -> Result<LevelMetadata, CompileError> {
-    let map_id = keys.get("map_id").cloned().unwrap_or_default();
+    let course_id = keys.get("course_id").cloned().unwrap_or_default();
     let level_name = keys.get("level_name").cloned().unwrap_or_default();
     let level_creator = keys.get("level_creator").cloned().unwrap_or_default();
     let level_description = keys.get("level_description").cloned().unwrap_or_default();
@@ -298,18 +314,68 @@ fn extract_metadata(keys: &std::collections::HashMap<String, String>) -> Result<
     };
 
     Ok(LevelMetadata {
-        map_id,
+        course_id,
         level_name,
         level_creator,
         level_description,
         game_mode,
         checkpoints,
+        metadata_schema_version: keys.get("metadata_schema_version").cloned(),
+        level_uuid: keys.get("level_uuid").cloned(),
+        bronze_time_ms: keys.get("bronze_time_ms").cloned(),
+        silver_time_ms: keys.get("silver_time_ms").cloned(),
+        gold_time_ms: keys.get("gold_time_ms").cloned(),
     })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metadata::validate_extended_metadata;
+
+    #[test]
+    fn test_extended_metadata_property_order_and_nesting() {
+        for ext in ["map", "vmf"] { for before in [false,true] {
+            let fields = r#""metadata_schema_version" "0001"
+"level_uuid" "550E8400-E29B-41D4-A716-446655440000"
+"bronze_time_ms" " 060000 "
+"silver_time_ms" "045000"
+"gold_time_ms" "30000""#;
+            let root = r#""course_id" "root_course"
+"level_name" "Root Name"
+"level_creator" "Creator"
+"level_description" "Description"
+"game_mode" "std"
+"checkpoints" "3""#;
+            let props=if before {format!("{fields}\n{root}\n\"classname\" \"info_level_metadata\"")} else {format!("\"classname\" \"info_level_metadata\"\n{fields}\n{root}")};
+            let nested = r#""metadata_schema_version" "9"
+"level_uuid" "bad"
+"course_id" "nested"
+"game_mode" "nested"
+"bronze_time_ms" "1""#;
+            let input=if ext=="map" {format!("{{\n{props}\n{{\n\"classname\" \"nested\"\n{nested}\n}}\n}}\n{{\n\"classname\" \"other\"\n\"bronze_time_ms\" \"2\"\n}}") } else {format!("entity\n{{\n{props}\nsolid\n{{\nentity\n{{\n\"classname\" \"info_level_metadata\"\n{nested}\n}}\n}}\n}}\nentity\n{{\n\"classname\" \"other\"\n\"bronze_time_ms\" \"2\"\n}}")};
+            let snapshot=input.clone(); let result=parse_map(Path::new(if ext=="map"{"x.map"}else{"x.vmf"}),&input).unwrap(); assert_eq!(input,snapshot); let m=result.metadata.unwrap();
+            assert_eq!((&m.course_id,&m.level_name,&m.level_creator,&m.level_description,&m.game_mode,m.checkpoints),(&"root_course".to_string(),&"Root Name".to_string(),&"Creator".to_string(),&"Description".to_string(),&"std".to_string(),3));
+            assert_eq!(m.metadata_schema_version.as_deref(),Some("0001")); assert_eq!(m.level_uuid.as_deref(),Some("550E8400-E29B-41D4-A716-446655440000")); assert_eq!(m.bronze_time_ms.as_deref(),Some(" 060000 ")); assert_eq!(m.silver_time_ms.as_deref(),Some("045000")); assert_eq!(m.gold_time_ms.as_deref(),Some("30000"));
+            let normalized=validate_extended_metadata(&m).unwrap(); assert_eq!(normalized.level_uuid,"550e8400-e29b-41d4-a716-446655440000"); assert_eq!(normalized.metadata_schema_version,1); assert_eq!((normalized.bronze_time_ms,normalized.silver_time_ms,normalized.gold_time_ms),(60000,45000,30000)); assert!(normalized.medal_configured);
+        }}
+    }
+
+    #[test]
+    fn test_extended_metadata_presence_and_raw_lexemes() {
+        for ext in ["map","vmf"] { let path=Path::new(if ext=="map"{"x.map"}else{"x.vmf"}); let start=if ext=="map"{"{\n\"classname\" \"info_level_metadata\"\n"}else{"entity\n{\n\"classname\" \"info_level_metadata\"\n"}; let absent=format!("{start}}}"); let m=parse_map(path,&absent).unwrap().metadata.unwrap(); assert!(m.metadata_schema_version.is_none()&&m.level_uuid.is_none()&&m.bronze_time_ms.is_none()&&m.silver_time_ms.is_none()&&m.gold_time_ms.is_none()); assert_eq!(m.game_mode,"");
+            let zeros=format!("{start}\"bronze_time_ms\" \"0\"\n\"silver_time_ms\" \"0\"\n\"gold_time_ms\" \"0\"\n}}"); let m=parse_map(path,&zeros).unwrap().metadata.unwrap(); assert_eq!((m.bronze_time_ms.as_deref(),m.silver_time_ms.as_deref(),m.gold_time_ms.as_deref()),(Some("0"),Some("0"),Some("0")));
+            let base=format!("{start}\"metadata_schema_version\" \"1\"\n\"level_uuid\" \"550e8400-e29b-41d4-a716-446655440000\"\n\"bronze_time_ms\" \"1000\"\n\"silver_time_ms\" \"500\"\n\"gold_time_ms\" \"100\"\n}}"); let invalid_bronze=base.replace("\"1000\"","\"1e3\""); let m=parse_map(path,&invalid_bronze).unwrap().metadata.unwrap(); assert_eq!(m.bronze_time_ms.as_deref(),Some("1e3")); assert!(validate_extended_metadata(&m).is_err()); let invalid_schema=base.replace("\"1\"","\"2\""); let m=parse_map(path,&invalid_schema).unwrap().metadata.unwrap(); assert_eq!(m.metadata_schema_version.as_deref(),Some("2")); assert!(validate_extended_metadata(&m).is_err());
+            let authored=base.replace("\n}", "\n\"author_time_ms\" \"ignored\"\n\"author_provenance\" \"ignored\"\n}"); assert_ne!(authored,base); assert!(authored.contains("author_time_ms")); let base_m=parse_map(path,&base).unwrap().metadata.unwrap(); let authored_m=parse_map(path,&authored).unwrap().metadata.unwrap(); assert_eq!((&base_m.course_id,&base_m.level_name,&base_m.level_creator,&base_m.level_description,&base_m.game_mode,base_m.checkpoints,&base_m.metadata_schema_version,&base_m.level_uuid,&base_m.bronze_time_ms,&base_m.silver_time_ms,&base_m.gold_time_ms),(&authored_m.course_id,&authored_m.level_name,&authored_m.level_creator,&authored_m.level_description,&authored_m.game_mode,authored_m.checkpoints,&authored_m.metadata_schema_version,&authored_m.level_uuid,&authored_m.bronze_time_ms,&authored_m.silver_time_ms,&authored_m.gold_time_ms)); let b=validate_extended_metadata(&base_m).unwrap(); let a=validate_extended_metadata(&authored_m).unwrap(); assert_eq!((b.level_uuid,b.bronze_time_ms,b.silver_time_ms,b.gold_time_ms),(a.level_uuid,a.bronze_time_ms,a.silver_time_ms,a.gold_time_ms));
+        }
+    }
+
+    #[test]
+    fn test_extended_duplicate_metadata_root_only() {
+        for ext in ["map","vmf"] { let path=Path::new(if ext=="map"{"x.map"}else{"x.vmf"}); let ent=if ext=="map"{"{\n\"classname\" \"info_level_metadata\"\n}"}else{"entity\n{\n\"classname\" \"info_level_metadata\"\n}"}; assert!(matches!(parse_map(path,&format!("{ent}\n{ent}")),Err(CompileError::DuplicateMetadata))); assert!(parse_map(path,if ext=="map"{"{\n\"classname\" \"worldspawn\"\n{\n\"classname\" \"info_level_metadata\"\n}\n}"}else{"entity\n{\n\"classname\" \"worldspawn\"\nentity\n{\n\"classname\" \"info_level_metadata\"\n}\n}"}).unwrap().metadata.is_none()); assert!(parse_map(path,"").unwrap().metadata.is_none());
+            let valid=if ext=="map" {"{\n\"classname\" \"info_level_metadata\"\n\"course_id\" \"root\"\n\"metadata_schema_version\" \"1\"\n\"level_uuid\" \"550e8400-e29b-41d4-a716-446655440000\"\n\"bronze_time_ms\" \"1000\"\n\"silver_time_ms\" \"500\"\n\"gold_time_ms\" \"100\"\n}\n{\n\"classname\" \"other\"\n{\n\"classname\" \"info_level_metadata\"\n}\n}"}else{"entity\n{\n\"classname\" \"info_level_metadata\"\n\"course_id\" \"root\"\n\"metadata_schema_version\" \"1\"\n\"level_uuid\" \"550e8400-e29b-41d4-a716-446655440000\"\n\"bronze_time_ms\" \"1000\"\n\"silver_time_ms\" \"500\"\n\"gold_time_ms\" \"100\"\n}\nentity\n{\n\"classname\" \"other\"\nentity\n{\n\"classname\" \"info_level_metadata\"\n}\n}"}; let m=parse_map(path,valid).unwrap().metadata.unwrap(); assert_eq!(m.course_id,"root"); assert_eq!(m.metadata_schema_version.as_deref(),Some("1")); assert_eq!(m.level_uuid.as_deref(),Some("550e8400-e29b-41d4-a716-446655440000")); assert_eq!((m.bronze_time_ms.as_deref(),m.silver_time_ms.as_deref(),m.gold_time_ms.as_deref()),(Some("1000"),Some("500"),Some("100")));
+        }
+    }
 
     #[test]
     fn test_parse_key_value() {
@@ -378,7 +444,7 @@ mod tests {
         let input = r#"
 {
 "classname" "info_level_metadata"
-"map_id" "test_level"
+"course_id" "test_level"
 "level_name" "Test Level"
 "level_creator" "Author"
 "level_description" "A test"
@@ -398,7 +464,7 @@ mod tests {
         let result = parse_map(Path::new("test.map"), input).unwrap();
         assert!(result.metadata.is_some());
         let meta = result.metadata.unwrap();
-        assert_eq!(meta.map_id, "test_level");
+        assert_eq!(meta.course_id, "test_level");
         assert_eq!(meta.level_name, "Test Level");
         assert_eq!(meta.checkpoints, 3);
         assert_eq!(result.checkpoint_count, 2);
@@ -441,11 +507,11 @@ mod tests {
         let input = r#"
 {
 "classname" "info_level_metadata"
-"map_id" "test1"
+"course_id" "test1"
 }
 {
 "classname" "info_level_metadata"
-"map_id" "test2"
+"course_id" "test2"
 }
 "#;
         let result = parse_map(Path::new("test.map"), input);
@@ -514,7 +580,7 @@ entity
 {
 	"id" "5"
 	"classname" "info_level_metadata"
-	"map_id" "vmf_test"
+	"course_id" "vmf_test"
 	"level_name" "VMF Test"
 	"level_creator" "Author"
 	"level_description" "desc"
@@ -548,7 +614,7 @@ entity
         assert!(result.textures.contains("+0LAVA"));
         assert!(!result.textures.iter().any(|t| t.to_lowercase().starts_with("tools/")));
         let meta = result.metadata.expect("metadata entity");
-        assert_eq!(meta.map_id, "vmf_test");
+        assert_eq!(meta.course_id, "vmf_test");
         assert_eq!(result.checkpoint_count, 1);
     }
 
@@ -566,15 +632,73 @@ entity
 entity
 {
 	"classname" "info_level_metadata"
-	"map_id" "a"
+	"course_id" "a"
 }
 entity
 {
 	"classname" "info_level_metadata"
-	"map_id" "b"
+	"course_id" "b"
 }
 "#;
         let result = parse_map(Path::new("x.vmf"), input);
         assert!(matches!(result, Err(CompileError::DuplicateMetadata)));
+    }
+
+    #[test]
+    fn test_player_spawn_teams_quake() {
+        let input = r#"
+{
+"classname" "info_level_metadata"
+"course_id" "spawns"
+"game_mode" "fz"
+}
+{
+"classname" "info_player_start"
+"origin" "0 0 0"
+}
+{
+"classname" "info_player_start"
+"team" "1"
+}
+{
+"classname" "info_player_start"
+"team" "2"
+}
+{
+"classname" "info_player_start"
+"team" "bogus"
+}
+"#;
+        let result = parse_map(Path::new("test.map"), input).unwrap();
+        assert_eq!(result.player_spawn_teams, vec![0, 1, 2, 0]);
+    }
+
+    #[test]
+    fn test_player_spawn_teams_vmf() {
+        let input = r#"
+entity
+{
+	"classname" "info_level_metadata"
+	"course_id" "spawns"
+	"game_mode" "fz"
+}
+entity
+{
+	"classname" "info_player_start"
+	"origin" "0 0 0"
+}
+entity
+{
+	"classname" "info_player_start"
+	"team" "1"
+}
+entity
+{
+	"classname" "info_player_start"
+	"team" "2"
+}
+"#;
+        let result = parse_map(Path::new("test.vmf"), input).unwrap();
+        assert_eq!(result.player_spawn_teams, vec![0, 1, 2]);
     }
 }

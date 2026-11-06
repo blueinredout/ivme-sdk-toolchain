@@ -8,10 +8,12 @@ pub enum CompileError {
     UnsupportedMapFormat(String),
     NoMetadataEntity,
     DuplicateMetadata,
-    EmptyMapId,
-    InvalidMapId(String),
+    FreezeTagNotEnoughSpawns(usize),
+    FreezeTagMissingTeamSpawns(usize, usize),
+    EmptyCourseId,
+    InvalidCourseId(String),
+    InvalidExtendedMetadata(String),
     InvalidPreview(PathBuf, String),
-    InvalidTextureName(String),
     DuplicateBasename(String, PathBuf, PathBuf),
     MappingInvalid(String),
     OutputWriteFailed(PathBuf, std::io::Error),
@@ -26,13 +28,21 @@ impl fmt::Display for CompileError {
             CompileError::UnsupportedMapFormat(ext) => write!(f, "Unsupported map format \"{}\" (expected .map or .vmf)", ext),
             CompileError::NoMetadataEntity => write!(f, "No info_level_metadata entity found in map"),
             CompileError::DuplicateMetadata => write!(f, "Multiple info_level_metadata entities found"),
-            CompileError::EmptyMapId => write!(f, "map_id is empty"),
-            CompileError::InvalidMapId(id) => write!(f, "Invalid map_id: \"{}\" (must match [a-zA-Z0-9_-]+)", id),
+            CompileError::FreezeTagNotEnoughSpawns(found) => write!(
+                f,
+                "FreezeTag must have at least 2 spawns! (found {})",
+                found
+            ),
+            CompileError::FreezeTagMissingTeamSpawns(team1, team2) => write!(
+                f,
+                "Team specific spawns placed, but not enough for each team! (info_player_start team 1: {}, team 2: {})",
+                team1, team2
+            ),
+            CompileError::EmptyCourseId => write!(f, "course_id is empty"),
+            CompileError::InvalidCourseId(id) => write!(f, "Invalid course_id: \"{}\" (must match [a-zA-Z0-9_-]+)", id),
+            CompileError::InvalidExtendedMetadata(msg) => write!(f, "Invalid compiler metadata: {}", msg),
             CompileError::InvalidPreview(p, reason) => {
                 write!(f, "Invalid preview image {}: {}", p.display(), reason)
-            }
-            CompileError::InvalidTextureName(msg) => {
-                write!(f, "Invalid texture name: {}", msg)
             }
             CompileError::DuplicateBasename(name, a, b) => {
                 write!(f, "Duplicate texture basename \"{}\" (flattened textures/ must be unique):\n  {}\n  {}", name, a.display(), b.display())

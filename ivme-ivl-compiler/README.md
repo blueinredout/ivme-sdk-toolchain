@@ -42,7 +42,7 @@ ivlc --map <path> [--preview <path>] [--icon <path>] [--mapping <path>] [--outpu
 | `--preview <path>` | No | Explicit preview image (defaults to `<map_dir>/preview.png`) |
 | `--icon <path>` | No | Explicit 128×128 icon (defaults to `<map_dir>/icon.png`) |
 | `--mapping <path>` | No | Explicit `mapping.csv` (defaults to auto-detect: `<map_dir>/mapping.csv`, then a single `<map_dir>/*.mapping.csv`) |
-| `--output <path>` | No | Output `.ivl` path (defaults to `<map_dir>/<map_id>.ivl`) |
+| `--output <path>` | No | Output `.ivl` path (defaults to `<map_dir>/<course_id>.ivl`) |
 | `--dry-run` | No | Validate without creating the archive |
 
 ### Examples
@@ -88,7 +88,7 @@ The map must contain exactly one `info_level_metadata` entity:
 ```
 {
 "classname" "info_level_metadata"
-"map_id" "my_level"
+"course_id" "my_level"
 "level_name" "My Level"
 "level_creator" "Author"
 "level_description" "Description"
@@ -102,8 +102,20 @@ The map must contain exactly one `info_level_metadata` entity:
 - `std`
 - `tag`
 - `infection`
+- `fz` (FreezeTag)
 
 Unknown modes produce a warning but do not fail compilation.
+
+FreezeTag (`fz`) maps must contain at least 2 `info_player_start` entities. If
+any spawn is team-specific (`"team" "1"` / `"team" "2"`; anything other than 0),
+at least one spawn for **each** team is required. Spawns with no `team` key (or
+`"team" "0"`) count as team-agnostic and are fine on their own as long as there
+are at least two.
+
+```text
+FreezeTag must have at least 2 spawns!
+Team specific spawns placed, but not enough for each team!
+```
 
 ## Texture Handling
 

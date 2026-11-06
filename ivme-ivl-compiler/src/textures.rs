@@ -14,15 +14,23 @@ const KNOWN_SUFFIXES: &[&str] = &[
     "height", "orm", "rough",
 ];
 
-/// Strict loose-stem rule (mirrors wadgen::valid_loose_stem).
+/// Strict loose-stem rule (mirrors wadgen::valid_loose_stem and WADWeaver's
+/// `names::parse_file_stem`): `[{] [+NNN] [!/~/-N] body`, where `{` may only
+/// combine with `~` and `+NNN`, `+NNN` takes no second prefix, and `-`
+/// REQUIRES a digit. Body: 1..64 ASCII alphanumerics/underscores.
 pub fn valid_loose_stem(stem: &str) -> bool {
     if stem.is_empty() || stem.len() > 80 {
         return false;
     }
     let mut s = stem;
-    if let Some(rest) = s.strip_prefix('{') {
-        s = rest;
-    }
+    let brace = match s.strip_prefix('{') {
+        Some(rest) => {
+            s = rest;
+            true
+        }
+        None => false,
+    };
+    let mut random = false;
     if let Some(rest) = s.strip_prefix('+') {
         let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
         if digits.is_empty() || digits.len() > 3 {
@@ -32,12 +40,33 @@ pub fn valid_loose_stem(stem: &str) -> bool {
             return false;
         }
         s = &rest[digits.len()..];
-    } else if let Some(c) = s.chars().next() {
-        if matches!(c, '!' | '~' | '-') {
-            s = &s[1..];
+        // An animation frame cannot carry a second prefix.
+        if s.starts_with(['!', '~', '-']) {
+            return false;
+        }
+    } else if let Some(rest) = s.strip_prefix('!') {
+        // `{!X` is no longer water: the engine reads ONE prefix.
+        if brace {
+            return false;
+        }
+        s = rest;
+    } else if let Some(rest) = s.strip_prefix('~') {
+        s = rest;
+    } else if let Some(rest) = s.strip_prefix('-') {
+        // `-N` random tiling needs its digit; `{-N` is no longer random.
+        if brace {
+            return false;
+        }
+        match rest.as_bytes() {
+            [d, ..] if d.is_ascii_digit() => {
+                random = true;
+                s = &rest[1..];
+            }
+            _ => return false,
         }
     }
-    if s.is_empty() || s.len() > 64 {
+    let max_body = if random { 63 } else { 64 };
+    if s.is_empty() || s.len() > max_body {
         return false;
     }
     s.bytes()
@@ -51,14 +80,18 @@ fn strip_one_suffix(lower: &str) -> &str {
     }
 }
 
-/// Split a lowercased stem into (long_base, anim_frame).
-/// `+0lava_albedo` -> ("lava", Some(0)); `{rock` -> ("rock", None).
+/// Split a lowercased stem into (long_base, anim_frame). Mirrors wadgen's
+/// `parse_file_stem` so the key equals the `long_base` column wadgen and
+/// WADWeaver write into mapping.csv: the `{`, `+NNN`, and `!` / `~` / `-N`
+/// prefixes are not part of the base, but a `-N` random digit is
+/// (`-0stone` -> "0stone"). `+0lava_albedo` -> ("lava", Some(0)).
 pub fn split_stem(lower: &str) -> (String, Option<u32>) {
     let mut s = lower;
     if let Some(rest) = s.strip_prefix('{') {
         s = rest;
     }
     let mut frame: Option<u32> = None;
+    let mut random: Option<u8> = None;
     if let Some(rest) = s.strip_prefix('+') {
         let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
         if !digits.is_empty() && digits.len() <= 3 {
@@ -69,13 +102,29 @@ pub fn split_stem(lower: &str) -> (String, Option<u32>) {
                 }
             }
         }
+    } else if let Some(rest) = s.strip_prefix('-') {
+        // Random tiling keeps its digit: `-0stone` -> "0stone".
+        match rest.as_bytes() {
+            [d, ..] if d.is_ascii_digit() => {
+                random = Some(d - b'0');
+                s = &rest[1..];
+            }
+            _ => {}
+        }
+    } else if let Some(rest) = s.strip_prefix('!').or_else(|| s.strip_prefix('~')) {
+        s = rest;
     }
-    (strip_one_suffix(s).to_string(), frame)
+    let base = strip_one_suffix(s).to_string();
+    match random {
+        Some(d) => (format!("{d}{base}"), frame),
+        None => (base, frame),
+    }
 }
 
-/// Normalize a raw `.map` face token for lookup: strip dirs + extension,
-/// lowercase, rewrite any `+N` anim frame to `+0` (the WAD/CSV holds the
-/// set's lowest frame; the game animates from loose files).
+/// Normalize a raw `.map` face token: strip dirs + extension, lowercase.
+/// Valve prefixes are KEPT (`{M_GRATE` -> `{m_grate`, `+2C_LAVA` ->
+/// `+2c_lava`) because mapping.csv keys are WAD names and carry them. The
+/// fuzzy variants a lookup may also accept are produced by [`face_keys`].
 pub fn normalize_face(face: &str) -> String {
     let mut s = face.rsplit(['/', '\\']).next().unwrap_or(face).to_string();
     if let Some(idx) = s.rfind('.') {
@@ -85,18 +134,50 @@ pub fn normalize_face(face: &str) -> String {
             s = stem.to_string();
         }
     }
-    let mut lower = s.to_lowercase();
-    // strip ONE leading '{' for comparison, keep it simple
-    let stripped = lower.strip_prefix('{').unwrap_or(&lower).to_string();
-    // rewrite +N -> +0
-    if let Some(rest) = stripped.strip_prefix('+') {
-        let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if !digits.is_empty() {
-            lower = format!("+0{}", &rest[digits.len()..]);
-            return lower;
+    s.to_lowercase()
+}
+
+/// `+N` -> `+0` rewrite of one key, keeping a `{` if there was one:
+/// `+2c_lava` -> `+0c_lava`, `{+2g_pane` -> `{+0g_pane`. `None` when the key
+/// has no animation frame.
+fn anim_zero(key: &str) -> Option<String> {
+    let (brace, rest) = match key.strip_prefix('{') {
+        Some(r) => ("{", r),
+        None => ("", key),
+    };
+    let rest = rest.strip_prefix('+')?;
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() {
+        return None;
+    }
+    Some(format!("{brace}+0{}", &rest[digits.len()..]))
+}
+
+/// Table-lookup keys for a normalized face, most specific first:
+/// the exact WAD name, then the `{`-less form, then the `+0` frame variant
+/// of each (the CSV holds the set's lowest frame, which is not always `+0`),
+/// and finally every variant with one PBR suffix stripped (TrenchBroom
+/// faces carry `_albedo`/`_normal`).
+fn face_keys(norm: &str) -> Vec<String> {
+    fn add(keys: &mut Vec<String>, key: String) {
+        if !key.is_empty() && !keys.contains(&key) {
+            keys.push(key);
         }
     }
-    stripped
+    let unbraced = norm.strip_prefix('{').unwrap_or(norm).to_string();
+    let mut keys: Vec<String> = Vec::new();
+    add(&mut keys, norm.to_string());
+    add(&mut keys, unbraced.clone());
+    for base in [norm, unbraced.as_str()] {
+        if let Some(zeroed) = anim_zero(base) {
+            add(&mut keys, zeroed);
+        }
+    }
+    for key in keys.clone() {
+        let (stripped, _) = split_stem(&key);
+        add(&mut keys, stripped);
+    }
+    keys
 }
 
 #[derive(Debug, Clone)]
@@ -188,12 +269,16 @@ pub fn scan_textures(textures_dir: &Path) -> Result<TextureScan, crate::error::C
     if let Some((name, a, b)) = dup {
         return Err(CompileError::DuplicateBasename(name, a, b));
     }
+    // Invalid stems are skipped, not fatal: one stray `my texture (1).png` in
+    // the artist's folder must not block the whole level (wadgen and the
+    // WAD editor skip such files too). A face that needed one still surfaces
+    // as MISSING_TEXTURE below.
     if !invalid.is_empty() {
-        return Err(CompileError::InvalidTextureName(format!(
-            "{} file(s) — rename to [A-Za-z0-9_] (optional {{/!/~/-[+NNN]):\n  {}",
+        eprintln!(
+            "Warning: INVALID_TEXTURE_NAME - {} file(s) skipped (want [A-Za-z0-9_] with an optional {{/!/~/-N/+NNN prefix):\n  {}",
             invalid.len(),
             invalid.join("\n  ")
-        )));
+        );
     }
 
     let mut by_base: BTreeMap<String, Vec<usize>> = BTreeMap::new();
@@ -216,17 +301,12 @@ pub struct TextureResolution {
     pub conflicts: Vec<String>,
 }
 
+/// First table row whose key matches any [`face_keys`] variant. Keys are
+/// WAD names (prefixes included), so `{C_ROCK` and `+2C_LAVA` both hit.
 fn table_hit(table: &BTreeMap<String, String>, norm: &str) -> Option<String> {
-    if let Some(hit) = table.get(norm) {
-        return Some(hit.clone());
-    }
-    let (stripped, _) = split_stem(norm);
-    if stripped != norm {
-        if let Some(hit) = table.get(&stripped) {
-            return Some(hit.clone());
-        }
-    }
-    None
+    face_keys(norm)
+        .into_iter()
+        .find_map(|key| table.get(&key).cloned())
 }
 
 /// Resolve faces against the scan, via the merged local table and the
@@ -246,10 +326,25 @@ pub fn resolve_textures(
     let mut conflicts = Vec::new();
     let mut sets: BTreeSet<String> = BTreeSet::new();
 
+    // Long bases the game ships (internal table VALUES, e.g. `floor`).
+    // TB faces carry full names (`dev/floor` -> norm `floor`) which never
+    // match short-name keys (`c_floor`), so match values too to stay silent.
+    let internal_longs: BTreeSet<String> = internal
+        .map(|t| t.values().cloned().collect())
+        .unwrap_or_default();
+
     for face in referenced {
         let norm = normalize_face(face);
         let local_hit = mapping.and_then(|t| table_hit(t, &norm));
-        let internal_hit = internal.and_then(|t| table_hit(t, &norm));
+        let mut internal_hit = internal.and_then(|t| table_hit(t, &norm));
+        if internal_hit.is_none() {
+            let (stripped, _) = split_stem(&norm);
+            if internal_longs.contains(&stripped) {
+                internal_hit = Some(stripped);
+            } else if internal_longs.contains(&norm) {
+                internal_hit = Some(norm.clone());
+            }
+        }
         // Candidate long bases, in order:
         //  1. local mapping hit on the normalized key (+N rewritten to +0)
         //  2. local mapping hit on the suffix-stripped key
@@ -342,14 +437,87 @@ mod tests {
         assert_eq!(split_stem("+12lava"), ("lava".to_string(), Some(12)));
         assert_eq!(split_stem("{rock"), ("rock".to_string(), None));
         assert_eq!(split_stem("plain"), ("plain".to_string(), None));
+        // The Valve prefixes leave no trace in the base (mapping.csv keys).
+        assert_eq!(split_stem("!water"), ("water".to_string(), None));
+        assert_eq!(split_stem("~metal_lamp"), ("metal_lamp".to_string(), None));
+        assert_eq!(split_stem("{~grate"), ("grate".to_string(), None));
+        assert_eq!(split_stem("{+2glass_pane"), ("glass_pane".to_string(), Some(2)));
+        // Random tiling keeps its digit, exactly like wadgen/WADWeaver.
+        assert_eq!(split_stem("-0stone"), ("0stone".to_string(), None));
+        assert_eq!(split_stem("-9x_albedo"), ("9x".to_string(), None));
+        // A bare `-` is not random tiling; it stays in the name (worst case a
+        // missing texture, never a wrong match).
+        assert_eq!(split_stem("-stone"), ("-stone".to_string(), None));
     }
 
     #[test]
     fn test_normalize_face() {
         assert_eq!(normalize_face("M_TEST"), "m_test");
-        assert_eq!(normalize_face("+5C_LAVA"), "+0c_lava");
+        assert_eq!(normalize_face("+5C_LAVA"), "+5c_lava");
         assert_eq!(normalize_face("textures/M_TEST"), "m_test");
-        assert_eq!(normalize_face("{C_ROCK"), "c_rock");
+        assert_eq!(normalize_face("{C_ROCK"), "{c_rock");
+        assert_eq!(normalize_face("textures/{+2C_ROCK.png"), "{+2c_rock");
+    }
+
+    #[test]
+    fn test_face_keys() {
+        // Exact WAD name first, then the brace-less form, then the frames.
+        assert_eq!(face_keys("m_test"), ["m_test"]);
+        assert_eq!(face_keys("{c_rock"), ["{c_rock", "c_rock"]);
+        assert_eq!(
+            face_keys("{+2g_pane"),
+            ["{+2g_pane", "+2g_pane", "{+0g_pane", "+0g_pane", "g_pane"]
+        );
+        assert_eq!(face_keys("+5c_lava"), ["+5c_lava", "+0c_lava", "c_lava"]);
+        // TrenchBroom faces carry the PBR suffix and no prefix.
+        assert_eq!(
+            face_keys("metal_test_albedo"),
+            ["metal_test_albedo", "metal_test"]
+        );
+    }
+
+    fn table_of(rows: &[(&str, &str)]) -> BTreeMap<String, String> {
+        rows.iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn test_table_hit_prefixes_and_frames() {
+        // A table exactly as WADWeaver/wadgen writes it: keys keep `{`/`!`/
+        // `~`/`-N`/`+N`.
+        let table = table_of(&[
+            ("m_test", "metal_test"),
+            ("{m_grate", "metal_grate"),
+            ("{w_fence", "wood_fence"),
+            ("{+2g_pane", "glass_pane"),
+            ("!c_water", "water"),
+            ("~m_lamp", "metal_lamp"),
+            ("-0c_stone", "0stone"),
+        ]);
+        for (face, want) in [
+            ("M_TEST", "metal_test"),
+            ("{M_GRATE", "metal_grate"),
+            ("textures/{W_FENCE", "wood_fence"),
+            ("{+2G_PANE", "glass_pane"),
+            ("!C_WATER", "water"),
+            ("~M_LAMP", "metal_lamp"),
+            ("-0C_STONE", "0stone"),
+        ] {
+            assert_eq!(table_hit(&table, &normalize_face(face)), Some(want.to_string()), "{face}");
+        }
+        // A face picking a later frame of a set resolves to the set's row.
+        assert_eq!(
+            table_hit(&table, &normalize_face("+5C_LAVA")),
+            None,
+            "no row for that set in this table"
+        );
+        let lava = table_of(&[("+0c_lava", "lava")]);
+        assert_eq!(
+            table_hit(&lava, &normalize_face("+3C_LAVA")),
+            Some("lava".to_string())
+        );
+        assert_eq!(table_hit(&table, &normalize_face("NOT_A_TEXTURE")), None);
     }
 
     #[test]
@@ -358,9 +526,24 @@ mod tests {
         assert!(valid_loose_stem("+0lava"));
         assert!(valid_loose_stem("{rock"));
         assert!(valid_loose_stem("{+12lava_normal"));
+        // D2 prefixes, same set wadgen and WADWeaver accept.
+        assert!(valid_loose_stem("!water"));
+        assert!(valid_loose_stem("~metal_lamp"));
+        assert!(valid_loose_stem("{~grate"));
+        assert!(valid_loose_stem("-0stone"));
+        assert!(valid_loose_stem("-9x_albedo"));
         assert!(!valid_loose_stem("my brick wall (final)"));
         assert!(!valid_loose_stem("with-dash"));
         assert!(!valid_loose_stem("+256lava"));
+        // One prefix only, and `-` needs a digit.
+        assert!(!valid_loose_stem("{!water"));
+        assert!(!valid_loose_stem("{-0x"));
+        assert!(!valid_loose_stem("-stone"));
+        assert!(!valid_loose_stem("-"));
+        assert!(!valid_loose_stem("-0"));
+        assert!(!valid_loose_stem("+0~lamp"));
+        assert!(!valid_loose_stem("+0-0x"));
+        assert!(!valid_loose_stem("{"));
     }
 
     fn test_scan(base: &str) -> TextureScan {

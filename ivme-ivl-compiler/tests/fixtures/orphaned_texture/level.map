@@ -1,6 +1,11 @@
 {
 "classname" "info_level_metadata"
-"map_id" "orphan_level"
+"metadata_schema_version" "1"
+"level_uuid" "550e8400-e29b-41d4-a716-446655440000"
+"bronze_time_ms" "0"
+"silver_time_ms" "0"
+"gold_time_ms" "0"
+"course_id" "orphan_level"
 "level_name" "Orphan Level"
 "level_creator" "Test Author"
 "level_description" "A test level with orphaned textures"

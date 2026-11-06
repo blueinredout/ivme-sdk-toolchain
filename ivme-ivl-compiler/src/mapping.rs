@@ -17,13 +17,26 @@ pub struct MappingTable {
     pub rows: usize,
 }
 
+/// A `wad_name` the game can resolve: the full WAD3 grammar (PLAN D2).
+/// `{` + optional `+NNN` + body, or one of the Valve prefixes `!` / `~` /
+/// `-N`, plus a plain body. `~` is allowed anywhere in the body (the IVME
+/// light-emitting convention). Mirrors WADWeaver's `names::parse_wad_name`,
+/// so a table written by WADWeaver or wadgen loads without skipped rows.
+///
+/// Invalid on purpose: `{!X` (that is no longer water), `{-0X` (no longer
+/// random tiling), `+NX` with a second prefix, `-` without a digit.
 fn valid_wad_name(s: &str) -> bool {
-    // ^\{?(\+\d{1,3})?[A-Z0-9_]{1,15}$  (+NNN anim extension of the
-    // shorten-plan regex; the client must adopt the same expression)
-    let mut s = s;
-    if let Some(rest) = s.strip_prefix('{') {
-        s = rest;
+    if s.is_empty() || s.len() > 15 || !s.is_ascii() {
+        return false;
     }
+    let mut s = s;
+    let braced = match s.strip_prefix('{') {
+        Some(rest) => {
+            s = rest;
+            true
+        }
+        None => false,
+    };
     if let Some(rest) = s.strip_prefix('+') {
         let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
         if digits.is_empty() || digits.len() > 3 {
@@ -33,12 +46,30 @@ fn valid_wad_name(s: &str) -> bool {
             return false;
         }
         s = &rest[digits.len()..];
+        // An animation frame cannot carry a second prefix.
+        if s.starts_with(['!', '~', '-']) {
+            return false;
+        }
+    } else if let Some(rest) = s.strip_prefix('~') {
+        s = rest;
+    } else if braced {
+        // `{` stands for transparency; `{!` / `{-N` would lose that meaning.
+        if s.starts_with(['!', '-']) {
+            return false;
+        }
+    } else if let Some(rest) = s.strip_prefix('!') {
+        s = rest;
+    } else if let Some(rest) = s.strip_prefix('-') {
+        match rest.as_bytes() {
+            [d, ..] if d.is_ascii_digit() => s = &rest[1..],
+            _ => return false,
+        }
     }
-    if s.is_empty() || s.len() > 15 {
+    if s.is_empty() {
         return false;
     }
     s.bytes()
-        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
+        .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_' || b == b'~')
 }
 
 fn valid_long_base(s: &str) -> bool {
@@ -349,6 +380,25 @@ mod tests {
         assert!(!valid_wad_name("M TEST"));
         assert!(!valid_wad_name("M/TEST"));
         assert!(!valid_wad_name("+256C_X"));
+        // D2 prefixes: water, light (alone or over `{`), random tiling, and
+        // `~` inside the body.
+        assert!(valid_wad_name("!C_WATER"));
+        assert!(valid_wad_name("~M_LAMP"));
+        assert!(valid_wad_name("{~M_LAMP"));
+        assert!(valid_wad_name("-0C_STONE"));
+        assert!(valid_wad_name("-9X"));
+        assert!(valid_wad_name("M_TEST~"));
+        assert!(valid_wad_name("AB~C"));
+        // One prefix only; `-` needs a digit; a frame takes no second prefix.
+        assert!(!valid_wad_name("{!C_WATER"));
+        assert!(!valid_wad_name("{-0C_STONE"));
+        assert!(!valid_wad_name("-C_STONE"));
+        assert!(!valid_wad_name("-"));
+        assert!(!valid_wad_name("+0!C_X"));
+        assert!(!valid_wad_name("+0~M_LAMP"));
+        assert!(!valid_wad_name("+0-0C_X"));
+        assert!(!valid_wad_name("{"));
+        assert!(!valid_wad_name("ABCDEFGHIJKLMNOP"));
         assert!(valid_long_base("metal_test"));
         assert!(!valid_long_base("Metal_Test"));
         assert!(!valid_long_base("../../evil"));
