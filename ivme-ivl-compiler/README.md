@@ -32,6 +32,7 @@ The release binary is produced at `target/release/ivlc` (or `ivlc.exe` on Window
 
 ```
 ivlc --map <path> [--preview <path>] [--icon <path>] [--mapping <path>] [--output <path>] [--dry-run]
+ivlc --map <path> --init-metadata
 ```
 
 ### Arguments
@@ -41,9 +42,10 @@ ivlc --map <path> [--preview <path>] [--icon <path>] [--mapping <path>] [--outpu
 | `--map <path>` | Yes | Path to `level.map` or `level.vmf` |
 | `--preview <path>` | No | Explicit preview image (defaults to `<map_dir>/preview.png`) |
 | `--icon <path>` | No | Explicit 128×128 icon (defaults to `<map_dir>/icon.png`) |
-| `--mapping <path>` | No | Explicit `mapping.csv` (defaults to auto-detect: `<map_dir>/mapping.csv`, then a single `<map_dir>/*.mapping.csv`) |
-| `--output <path>` | No | Output `.ivl` path (defaults to `<map_dir>/<course_id>.ivl`) |
+| `--mapping <path>` | No | Repeatable explicit mapping inputs; auto-merges `<map_dir>/mapping.csv` and all `<map_dir>/*.mapping.csv` (first wins) |
+| `--output <path>` | No | Output `.ivl` path (defaults to `<map_dir>/<source_file_stem>.ivl`) |
 | `--dry-run` | No | Validate without creating the archive |
+| `--init-metadata` | No | Initialize metadata in the source file without creating an archive |
 
 ### Examples
 
@@ -59,7 +61,15 @@ ivlc --map my_level/level.map --dry-run
 
 # Explicit preview
 ivlc --map my_level/level.map --preview screenshot.png
+
+# Initialize metadata before compiling
+ivlc --map my_level/level.map --init-metadata
 ```
+
+Initialization fills a missing or empty UUID and preserves an existing valid one.
+Running it again leaves valid metadata unchanged. Re-authoring a distinct work requires
+a new UUID. It creates no archive and conflicts with compilation flags, including
+`--dry-run`. Normal compilation and dry-run never rewrite the source.
 
 ## Project Structure
 
@@ -94,17 +104,26 @@ The map must contain exactly one `info_level_metadata` entity:
 "level_description" "Description"
 "game_mode" "std"
 "checkpoints" "3"
+"metadata_schema_version" "1"
+"level_uuid" "550e8400-e29b-41d4-a716-446655440000"
+"bronze_time_ms" "60000"
+"silver_time_ms" "45000"
+"gold_time_ms" "30000"
 }
 ```
 
 ### Recognized Game Modes
 
 - `std`
-- `tag`
-- `infection`
 - `fz` (FreezeTag)
+- `pg`
 
-Unknown modes produce a warning but do not fail compilation.
+Only `std`, `pg`, and `fz` are supported. `hub` is reserved for shipped
+content. Missing or unknown modes fail compilation.
+
+Target times are milliseconds, each at most `2147483647`, and must satisfy
+`bronze > silver > gold > 0`. All three absent or all three set to `0` means
+unconfigured targets; partial or malformed target sets are rejected.
 
 FreezeTag (`fz`) maps must contain at least 2 `info_player_start` entities. If
 any spawn is team-specific (`"team" "1"` / `"team" "2"`; anything other than 0),

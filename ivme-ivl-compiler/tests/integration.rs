@@ -46,6 +46,52 @@ fn metadata_source(ext: &str, overrides: &[(&str, Option<&str>)], mode: Option<&
     out
 }
 
+fn init_source(ext: &str, props: &str) -> String {
+    if ext == "vmf" { format!("entity\n{{\n\"classname\" \"info_level_metadata\"\n{props}}}\n") }
+    else { format!("{{\n\"classname\" \"info_level_metadata\"\n{props}}}\n") }
+}
+
+fn minimal_init_props() -> &'static str { "\"course_id\" \"init_test\"\n" }
+
+#[test]
+fn test_init_metadata_cli_map_vmf_stable_identity() {
+    for ext in ["map", "vmf"] {
+        let f = OwnedMetadataFixture::new(); let src = f.source(ext); fs::write(&src, init_source(ext, minimal_init_props())).unwrap();
+        for (status, word) in [("initialized", "initialized"), ("unchanged", "unchanged")] {
+            let (out, err, code) = run_compiler(&["--map",src.to_str().unwrap(),"--init-metadata"]);
+            assert_eq!(code,0,"{out}\n{err}"); assert!(out.to_lowercase().contains(word),"{out}");
+            let bytes=fs::read(&src).unwrap(); let text=String::from_utf8(bytes.clone()).unwrap();
+            assert!(text.contains("\"metadata_schema_version\" \"1\""));
+            for key in ["bronze_time_ms","silver_time_ms","gold_time_ms"] { assert!(text.contains(&format!("\"{key}\" \"0\""))); }
+            let uuid=text.lines().find(|l|l.contains("\"level_uuid\"")).unwrap().split('\"').nth(3).unwrap();
+            assert_eq!(uuid.len(),36); assert_eq!(&uuid[14..15],"4"); assert!(matches!(&uuid[19..20],"8"|"9"|"a"|"b"));
+            assert!(uuid.chars().enumerate().all(|(i,c)| if [8,13,18,23].contains(&i) {c=='-'} else {c.is_ascii_digit()||('a'..='f').contains(&c)}));
+            if status=="initialized" { let first=bytes; let (out,err,code)=run_compiler(&["--map",src.to_str().unwrap(),"--init-metadata"]); assert_eq!(code,0,"{out}\n{err}"); assert!(out.to_lowercase().contains("unchanged")); assert_eq!(fs::read(&src).unwrap(),first); }
+        }
+        assert_eq!(fs::read_dir(&f.root).unwrap().count(),1);
+    }
+}
+
+#[test]
+fn test_init_metadata_cli_rejections_preserve_source() {
+    for ext in ["map","vmf"] {
+        let valid=init_source(ext,minimal_init_props());
+        let bad=[init_source(ext,"\"metadata_schema_version\" \"2\"\n"),init_source(ext,"\"level_uuid\" \"bad\"\n"),init_source(ext,"\"bronze_time_ms\" \"0\"\n"),format!("{}{}",init_source(ext,minimal_init_props()),init_source(ext,minimal_init_props()))];
+        for source in bad { let f=OwnedMetadataFixture::new(); let p=f.source(ext); fs::write(&p,&source).unwrap(); let (o,e,c)=run_compiler(&["--map",p.to_str().unwrap(),"--init-metadata"]); assert_ne!(c,0,"{o}\n{e}"); assert_eq!(fs::read(&p).unwrap(),source.as_bytes()); assert_eq!(fs::read_dir(&f.root).unwrap().count(),1); }
+        let f=OwnedMetadataFixture::new(); let p=f.source(ext); fs::write(&p,[0xff,0xfe]).unwrap(); let (o,e,c)=run_compiler(&["--map",p.to_str().unwrap(),"--init-metadata"]); assert_ne!(c,0,"{o}\n{e}"); assert_eq!(fs::read(&p).unwrap(),[0xff,0xfe]);
+        for option in [["--dry-run",""],["--output","forbidden.ivl"],["--preview","missing.png"],["--icon","missing.png"],["--mapping","missing.csv"]] { let f=OwnedMetadataFixture::new(); let p=f.source(ext); fs::write(&p,&valid).unwrap(); let mut args=vec!["--map",p.to_str().unwrap(),"--init-metadata",option[0]]; if !option[1].is_empty(){args.push(option[1]);} let(o,e,c)=run_compiler(&args); assert_ne!(c,0,"{o}\n{e}"); assert_eq!(fs::read(&p).unwrap(),valid.as_bytes()); assert_eq!(fs::read_dir(&f.root).unwrap().count(),1); }
+    }
+}
+
+#[test]
+fn test_init_metadata_cli_preserves_existing_metadata_bytes() {
+    for ext in ["map","vmf"] {
+        let original=format!("\u{feff}{}", init_source(ext,"// note\n\"metadata_schema_version\" \"0001\" // keep\n\"level_uuid\" \" 550E8400-E29B-41D4-A716-446655440000 \"\n\"bronze_time_ms\" \" 060000 \"\n\"silver_time_ms\" \"045000\"\n\"gold_time_ms\" \"30000\"\n\"level_description\" \"caf\u{00e9} \\\"ok\\\"\"\n\"unknown\" \"keep\"\n")).replace("\n", "\r\n");
+        let f=OwnedMetadataFixture::new(); let p=f.source(ext); fs::write(&p,original.as_bytes()).unwrap(); let(o,e,c)=run_compiler(&["--map",p.to_str().unwrap(),"--init-metadata"]); assert_eq!(c,0,"{o}\n{e}"); assert!(o.to_lowercase().contains("unchanged")); assert_eq!(fs::read(&p).unwrap(),original.as_bytes());
+        let old=init_source(ext,"\"metadata_schema_version\" \"0\"\n\"level_uuid\" \"\"\n\"bronze_time_ms\" \"0\"\n\"silver_time_ms\" \"0\"\n\"gold_time_ms\" \"0\"\n"); let f=OwnedMetadataFixture::new(); let p=f.source(ext); fs::write(&p,&old).unwrap(); let(o,e,c)=run_compiler(&["--map",p.to_str().unwrap(),"--init-metadata"]); assert_eq!(c,0,"{o}\n{e}"); let updated=String::from_utf8(fs::read(&p).unwrap()).unwrap(); let uuid=updated.lines().find(|l|l.contains("\"level_uuid\"")).unwrap().split('\"').nth(3).unwrap(); let expected=old.replace("\"metadata_schema_version\" \"0\"","\"metadata_schema_version\" \"1\"").replace("\"level_uuid\" \"\"",&format!("\"level_uuid\" \"{uuid}\"")); assert_eq!(updated,expected); let snap=updated.into_bytes(); let(o,e,c)=run_compiler(&["--map",p.to_str().unwrap(),"--init-metadata"]); assert_eq!(c,0,"{o}\n{e}"); assert_eq!(fs::read(&p).unwrap(),snap);
+    }
+}
+
 fn compile_case(ext: &str, source: &str, dry: bool) -> (OwnedMetadataFixture, String, String, i32) {
     let fixture = OwnedMetadataFixture::new(); let src = fixture.source(ext); fs::write(&src, source).unwrap();
     let snapshot = fs::read(&src).unwrap(); let output = fixture.output();
