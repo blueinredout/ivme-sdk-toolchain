@@ -18,6 +18,7 @@ pub enum CompileError {
     MappingInvalid(String),
     OutputWriteFailed(PathBuf, std::io::Error),
     ZipWriteFailed(String),
+    ContentIdentity(crate::content_identity::IdentityError),
 }
 
 impl fmt::Display for CompileError {
@@ -54,6 +55,7 @@ impl fmt::Display for CompileError {
                 write!(f, "Failed to write output file {}: {}", p.display(), e)
             }
             CompileError::ZipWriteFailed(msg) => write!(f, "ZIP write error: {}", msg),
+            CompileError::ContentIdentity(err) => write!(f, "{}", err),
         }
     }
 }
@@ -64,4 +66,8 @@ impl From<std::io::Error> for CompileError {
     fn from(e: std::io::Error) -> Self {
         CompileError::ZipWriteFailed(e.to_string())
     }
+}
+
+impl From<crate::content_identity::IdentityError> for CompileError {
+    fn from(e: crate::content_identity::IdentityError) -> Self { CompileError::ContentIdentity(e) }
 }

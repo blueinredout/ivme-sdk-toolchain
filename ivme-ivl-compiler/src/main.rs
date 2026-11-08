@@ -133,7 +133,9 @@ fn run(cli: Cli) -> Result<(), CompileError> {
     // 3. Read map file
     let map_bytes = fs::read(&map_path)
         .map_err(|e| CompileError::MapUnreadable(map_path.clone(), e))?;
-    let map_content = String::from_utf8_lossy(&map_bytes);
+    let map_text = std::str::from_utf8(&map_bytes)
+        .map_err(|e| CompileError::InvalidExtendedMetadata(format!("map source is not valid UTF-8: {}", e)))?;
+    let map_content = map_text.strip_prefix('\u{feff}').unwrap_or(map_text);
 
     // 4. Parse map
     let parse_result = map::parse_map(&map_path, &map_content)?;
@@ -220,6 +222,7 @@ fn run(cli: Cli) -> Result<(), CompileError> {
         parse_result.checkpoint_count,
         &parse_result.player_spawn_teams,
     )?;
+    let level_uuid = metadata::validate_extended_metadata(&validation.metadata)?.level_uuid;
 
     // 8. Emit validation warnings
     for warning in &validation.warnings {
@@ -266,6 +269,12 @@ fn run(cli: Cli) -> Result<(), CompileError> {
     let has_icon = icon.is_some();
     let has_mapping = mapping_table.is_some();
 
+    let pkg = package::PackageInput {
+        map_path: map_path.clone(), map_entry_name, map_bytes: map_bytes.to_vec(), preview, icon,
+        texture_files, mapping_csv: mapping_table.map(|t| t.csv_bytes), level_uuid,
+    };
+    let prepared = package::prepare_archive(&pkg)?;
+
     // 12. Dry-run check
     if cli.dry_run {
         println!("Validation successful: {}", validation.metadata.course_id);
@@ -279,17 +288,7 @@ fn run(cli: Cli) -> Result<(), CompileError> {
 
     // 13. Create archive (map entry mirrors the source extension;
     //     no editor.wad — the .ivl is the game deliverable).
-    let pkg = package::PackageInput {
-        map_path: map_path.clone(),
-        map_entry_name,
-        map_bytes: map_bytes.to_vec(),
-        preview,
-        icon,
-        texture_files,
-        mapping_csv: mapping_table.map(|t| t.csv_bytes),
-    };
-
-    let size = package::create_archive(&output_path, &pkg)?;
+    let size = package::create_archive(&output_path, &prepared)?;
 
     // 14. Report success
     let size_kb = size / 1024;

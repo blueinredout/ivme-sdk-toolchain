@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "level_uuid": "550e8400-e29b-41d4-a716-446655440000",
+  "cases": [
+    {
+      "name": "map_only",
+      "files": [
+        {
+          "path": "level.map",
+          "bytes_base64": "ewoiY2xhc3NuYW1lIiAiaW5mb19sZXZlbF9tZXRhZGF0YSIKImNvdXJzZV9pZCIgInJlY29yZF90ZXN0IgoiZ2FtZV9tb2RlIiAic3RkIgoibWV0YWRhdGFfc2NoZW1hX3ZlcnNpb24iICIxIgoibGV2ZWxfdXVpZCIgIjU1MGU4NDAwLWUyOWItNDFkNC1hNzE2LTQ0NjY1NTQ0MDAwMCIKImJyb256ZV90aW1lX21zIiAiNjAwMDAiCiJzaWx2ZXJfdGltZV9tcyIgIjQ1MDAwIgoiZ29sZF90aW1lX21zIiAiMzAwMDAiCn0K"
+        }
+      ],
+      "inventory": [
+        {
+          "path": "level.map",
+          "size_bytes": 237,
+          "sha256": "832811473966f4af6d8c9ef5afec83064645ab4fa3cc4f73a73671dd854cc239"
+        }
+      ],
+      "content_hash": "1907b6a94a7d4fd877806cf1be2dcc6edaa7dee8e1427e79751dda6f253e00e3"
+    },
+    {
+      "name": "vmf_only",
+      "files": [
+        {
+          "path": "level.vmf",
+          "bytes_base64": "ZW50aXR5CnsKImNsYXNzbmFtZSIgImluZm9fbGV2ZWxfbWV0YWRhdGEiCiJjb3Vyc2VfaWQiICJyZWNvcmRfdGVzdCIKImdhbWVfbW9kZSIgInN0ZCIKIm1ldGFkYXRhX3NjaGVtYV92ZXJzaW9uIiAiMSIKImxldmVsX3V1aWQiICI1NTBlODQwMC1lMjliLTQxZDQtYTcxNi00NDY2NTU0NDAwMDAiCiJicm9uemVfdGltZV9tcyIgIjYwMDAwIgoic2lsdmVyX3RpbWVfbXMiICI0NTAwMCIKImdvbGRfdGltZV9tcyIgIjMwMDAwIgp9Cg=="
+        }
+      ],
+      "inventory": [
+        {
+          "path": "level.vmf",
+          "size_bytes": 244,
+          "sha256": "fb6b9937167bf4386bb9dad4383cc60d06e76f3dc5bd4740afd4ac6465114c27"
+        }
+      ],
+      "content_hash": "b0ca5713d2a1254236f54f9f5ce8e2ab240d6699e9bde3af845a0acad3d0939d"
+    },
+    {
+      "name": "full",
+      "files": [
+        {
+          "path": "level.map",
+          "bytes_base64": "ewoiY2xhc3NuYW1lIiAiaW5mb19sZXZlbF9tZXRhZGF0YSIKImNvdXJzZV9pZCIgInJlY29yZF90ZXN0IgoiZ2FtZV9tb2RlIiAic3RkIgoibWV0YWRhdGFfc2NoZW1hX3ZlcnNpb24iICIxIgoibGV2ZWxfdXVpZCIgIjU1MGU4NDAwLWUyOWItNDFkNC1hNzE2LTQ0NjY1NTQ0MDAwMCIKImJyb256ZV90aW1lX21zIiAiNjAwMDAiCiJzaWx2ZXJfdGltZV9tcyIgIjQ1MDAwIgoiZ29sZF90aW1lX21zIiAiMzAwMDAiCn0K"
+        },
+        {
+          "path": "mapping.csv",
+          "bytes_base64": "d2FkX25hbWUsZmlsZSxsb25nX2Jhc2UKQ19URVNULHRlc3QuUE5HLHRleF90ZXN0Cg=="
+        },
+        {
+          "path": "textures/test.PNG",
+          "bytes_base64": "YWJj"
+        }
+      ],
+      "inventory": [
+        {
+          "path": "level.map",
+          "size_bytes": 237,
+          "sha256": "832811473966f4af6d8c9ef5afec83064645ab4fa3cc4f73a73671dd854cc239"
+        },
+        {
+          "path": "mapping.csv",
+          "size_bytes": 49,
+          "sha256": "9e5af82c48a6ea9dcf213525bc7da1371317a6a388b71fc20eac39e345f8f377"
+        },
+        {
+          "path": "textures/test.PNG",
+          "size_bytes": 3,
+          "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        }
+      ],
+      "content_hash": "edaf86fb4e1e227acda56348136a4b5aecd2a848c276395a31897c29bcc191e3"
+    },
+    {
+      "name": "full_changed",
+      "files": [
+        {
+          "path": "level.map",
+          "bytes_base64": "ewoiY2xhc3NuYW1lIiAiaW5mb19sZXZlbF9tZXRhZGF0YSIKImNvdXJzZV9pZCIgInJlY29yZF90ZXN0IgoiZ2FtZV9tb2RlIiAic3RkIgoibWV0YWRhdGFfc2NoZW1hX3ZlcnNpb24iICIxIgoibGV2ZWxfdXVpZCIgIjU1MGU4NDAwLWUyOWItNDFkNC1hNzE2LTQ0NjY1NTQ0MDAwMCIKImJyb256ZV90aW1lX21zIiAiNjAwMDAiCiJzaWx2ZXJfdGltZV9tcyIgIjQ1MDAwIgoiZ29sZF90aW1lX21zIiAiMzAwMDAiCn0K"
+        },
+        {
+          "path": "mapping.csv",
+          "bytes_base64": "d2FkX25hbWUsZmlsZSxsb25nX2Jhc2UKQ19URVNULHRlc3QuUE5HLHRleF90ZXN0Cg=="
+        },
+        {
+          "path": "textures/test.PNG",
+          "bytes_base64": "YWJk"
+        }
+      ],
+      "inventory": [
+        {
+          "path": "level.map",
+          "size_bytes": 237,
+          "sha256": "832811473966f4af6d8c9ef5afec83064645ab4fa3cc4f73a73671dd854cc239"
+        },
+        {
+          "path": "mapping.csv",
+          "size_bytes": 49,
+          "sha256": "9e5af82c48a6ea9dcf213525bc7da1371317a6a388b71fc20eac39e345f8f377"
+        },
+        {
+          "path": "textures/test.PNG",
+          "size_bytes": 3,
+          "sha256": "a52d159f262b2c6ddb724a61840befc36eb30c88877a4030b65cbe86298449c9"
+        }
+      ],
+      "content_hash": "b8bb2fcc37850a21598d87216246b7d5bd288e61b25b53ad5ee4c2a928c3637e"
+    },
+    {
+      "name": "full_renamed",
+      "files": [
+        {
+          "path": "level.map",
+          "bytes_base64": "ewoiY2xhc3NuYW1lIiAiaW5mb19sZXZlbF9tZXRhZGF0YSIKImNvdXJzZV9pZCIgInJlY29yZF90ZXN0IgoiZ2FtZV9tb2RlIiAic3RkIgoibWV0YWRhdGFfc2NoZW1hX3ZlcnNpb24iICIxIgoibGV2ZWxfdXVpZCIgIjU1MGU4NDAwLWUyOWItNDFkNC1hNzE2LTQ0NjY1NTQ0MDAwMCIKImJyb256ZV90aW1lX21zIiAiNjAwMDAiCiJzaWx2ZXJfdGltZV9tcyIgIjQ1MDAwIgoiZ29sZF90aW1lX21zIiAiMzAwMDAiCn0K"
+        },
+        {
+          "path": "mapping.csv",
+          "bytes_base64": "d2FkX25hbWUsZmlsZSxsb25nX2Jhc2UKQ19URVNULHRlc3QuUE5HLHRleF90ZXN0Cg=="
+        },
+        {
+          "path": "textures/renamed.PNG",
+          "bytes_base64": "YWJj"
+        }
+      ],
+      "inventory": [
+        {
+          "path": "level.map",
+          "size_bytes": 237,
+          "sha256": "832811473966f4af6d8c9ef5afec83064645ab4fa3cc4f73a73671dd854cc239"
+        },
+        {
+          "path": "mapping.csv",
+          "size_bytes": 49,
+          "sha256": "9e5af82c48a6ea9dcf213525bc7da1371317a6a388b71fc20eac39e345f8f377"
+        },
+        {
+          "path": "textures/renamed.PNG",
+          "size_bytes": 3,
+          "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        }
+      ],
+      "content_hash": "9143aade3e30e817a7f5696de25c21740bce4f12d6489e8fb28c59489dc7e378"
+    }
+  ]
+}

@@ -1,8 +1,9 @@
+use crate::content_identity::{hash_payload, FileDescriptor, PayloadEntry};
 use crate::error::CompileError;
 use crate::preview::{IconData, PreviewData};
 use std::collections::BTreeMap;
-use std::fs::File;
-use std::io::{Read, Write};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use zip::write::SimpleFileOptions;
 
@@ -17,79 +18,117 @@ pub struct PackageInput {
     pub texture_files: BTreeMap<String, PathBuf>,
     /// Clean mapping.csv bytes as validated (None = TrenchBroom-only map).
     pub mapping_csv: Option<Vec<u8>>,
+    pub level_uuid: String,
 }
 
-pub fn create_archive(
-    output_path: &Path,
-    input: &PackageInput,
-) -> Result<u64, CompileError> {
-    let tmp_path = output_path.with_extension("ivl.tmp");
+struct ArchiveFile { path: String, data: Vec<u8> }
 
-    let file = File::create(&tmp_path)
-        .map_err(|e| CompileError::OutputWriteFailed(tmp_path.clone(), e))?;
+pub struct PreparedArchive {
+    files: Vec<ArchiveFile>,
+}
 
-    let mut zip = zip::ZipWriter::new(file);
-    let options = SimpleFileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
-
-    // Add the map exactly as-is (entry mirrors the source extension)
-    zip.start_file(&input.map_entry_name, options)
-        .map_err(|e| CompileError::ZipWriteFailed(e.to_string()))?;
-    zip.write_all(&input.map_bytes)
-        .map_err(|e| CompileError::ZipWriteFailed(e.to_string()))?;
-
-    // Add normalized preview
-    if let Some(ref preview) = input.preview {
-        let png_data = crate::preview::encode_png(&preview.normalized);
-        zip.start_file("preview.png", options)
-            .map_err(|e| CompileError::ZipWriteFailed(e.to_string()))?;
-        zip.write_all(&png_data)
-            .map_err(|e| CompileError::ZipWriteFailed(e.to_string()))?;
+pub fn prepare_archive(input: &PackageInput) -> Result<PreparedArchive, CompileError> {
+    let mut files = vec![ArchiveFile { path: input.map_entry_name.clone(), data: input.map_bytes.clone() }];
+    if let Some(csv) = &input.mapping_csv { files.push(ArchiveFile { path: "mapping.csv".into(), data: csv.clone() }); }
+    for (name, source) in &input.texture_files {
+        let data = fs::read(source).map_err(|e| CompileError::ZipWriteFailed(format!("Failed to read {}: {}", source.display(), e)))?;
+        files.push(ArchiveFile { path: format!("textures/{name}"), data });
     }
+    let preview = input.preview.as_ref().map(|p| crate::preview::encode_png(&p.normalized));
+    let icon = input.icon.as_ref().map(|i| crate::preview::encode_png_size(&i.normalized, 128));
+    let mut payload: Vec<PayloadEntry> = files.iter().map(|f| PayloadEntry { path: f.path.clone(), data: f.data.clone(), is_directory: false }).collect();
+    let hash = hash_payload(&payload)?;
+    let manifest = serde_json::json!({
+        "ivl_schema_version": 1,
+        "content_hash_version": 1,
+        "level_uuid": input.level_uuid,
+        "content_hash": hash.content_hash,
+        "files": hash.files.iter().map(|f: &FileDescriptor| serde_json::json!({"path":f.path,"size_bytes":f.size_bytes,"sha256":f.sha256})).collect::<Vec<_>>(),
+    });
+    files.extend(preview.map(|data| ArchiveFile { path: "preview.png".into(), data }));
+    files.extend(icon.map(|data| ArchiveFile { path: "icon.png".into(), data }));
+    files.push(ArchiveFile { path: "ivl-manifest.json".into(), data: serde_json::to_vec(&manifest).map_err(|e| CompileError::ZipWriteFailed(e.to_string()))? });
+    payload.clear();
+    Ok(PreparedArchive { files })
+}
 
-    // Add normalized icon (level selector, 128x128)
-    if let Some(ref icon) = input.icon {
-        let png_data = crate::preview::encode_png_size(&icon.normalized, 128);
-        zip.start_file("icon.png", options)
-            .map_err(|e| CompileError::ZipWriteFailed(e.to_string()))?;
-        zip.write_all(&png_data)
-            .map_err(|e| CompileError::ZipWriteFailed(e.to_string()))?;
+pub fn create_archive(output_path: &Path, prepared: &PreparedArchive) -> Result<u64, CompileError> {
+    let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = output_path.file_name().unwrap_or_default().to_string_lossy();
+    let (tmp_path, file) = loop {
+        let candidate = parent.join(format!(".{}.{}.tmp", file_name, uuid::Uuid::new_v4()));
+        match OpenOptions::new().write(true).create_new(true).open(&candidate) {
+            Ok(file) => break (candidate, file),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(CompileError::OutputWriteFailed(candidate, e)),
+        }
+    };
+    let result = (|| {
+        let mut zip = zip::ZipWriter::new(file);
+        let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        for item in &prepared.files {
+            zip.start_file(&item.path, options).map_err(|e| CompileError::ZipWriteFailed(e.to_string()))?;
+            zip.write_all(&item.data).map_err(|e| CompileError::ZipWriteFailed(e.to_string()))?;
+        }
+        let file = zip.finish().map_err(|e| CompileError::ZipWriteFailed(e.to_string()))?;
+        file.sync_all().map_err(|e| CompileError::OutputWriteFailed(tmp_path.clone(), e))?;
+        let size = file.metadata().map_err(|e| CompileError::OutputWriteFailed(tmp_path.clone(), e))?.len();
+        drop(file);
+        fs::rename(&tmp_path, output_path).map_err(|e| CompileError::OutputWriteFailed(output_path.to_path_buf(), e))?;
+        Ok(size)
+    })();
+    if result.is_err() { let _ = fs::remove_file(&tmp_path); }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine;
+    use image::{ImageBuffer, Rgb};
+    use serde_json::Value;
+    use std::{collections::BTreeMap, fs::File, io::Read};
+    use zip::ZipArchive;
+
+    const FIXTURE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../contracts/record-package-v1.json"));
+    const UUID: &str = "550e8400-e29b-41d4-a716-446655440000";
+    struct Temp(PathBuf);
+    impl Temp {
+        fn new() -> Self {
+            let p = std::env::temp_dir().join(format!("ivlc-package-test-{}", uuid::Uuid::new_v4()));
+            fs::create_dir(&p).unwrap(); Self(p)
+        }
+        fn file(&self, name: &str, bytes: &[u8]) -> PathBuf { let p=self.0.join(name); fs::write(&p,bytes).unwrap(); p }
+        fn assert_clean(&self, expected: &[&str]) {
+            let mut got: Vec<_> = fs::read_dir(&self.0).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+            got.sort(); let mut want: Vec<_> = expected.iter().map(|s| s.to_string()).collect(); want.sort(); assert_eq!(got,want);
+        }
     }
-
-    // Add the validated mapping table (None = full-name-only map).
-    if let Some(ref csv) = input.mapping_csv {
-        zip.start_file("mapping.csv", options)
-            .map_err(|e| CompileError::ZipWriteFailed(e.to_string()))?;
-        zip.write_all(csv)
-            .map_err(|e| CompileError::ZipWriteFailed(e.to_string()))?;
+    impl Drop for Temp { fn drop(&mut self) { let root=fs::canonicalize(&self.0).unwrap(); let parent=fs::canonicalize(std::env::temp_dir()).unwrap(); assert_eq!(root.parent(), Some(parent.as_path())); let name=root.file_name().unwrap().to_str().unwrap(); assert!(name.starts_with("ivlc-package-test-")); uuid::Uuid::parse_str(&name[18..]).unwrap(); fs::remove_dir_all(&root).unwrap(); } }
+    fn case(name:&str)->Value { serde_json::from_str::<Value>(FIXTURE).unwrap()["cases"].as_array().unwrap().iter().find(|c|c["name"]==name).unwrap().clone() }
+    fn payloads(c:&Value)->BTreeMap<String,Vec<u8>> { c["files"].as_array().unwrap().iter().map(|f|(f["path"].as_str().unwrap().into(),base64::engine::general_purpose::STANDARD.decode(f["bytes_base64"].as_str().unwrap()).unwrap())).collect() }
+    fn input(t:&Temp,c:&Value)->PackageInput {
+        let p=payloads(c); let map_path=t.file("source.map",&p[if p.contains_key("level.map"){"level.map"}else{"level.vmf"}]);
+        let tex=p.iter().find(|(n,_)|n.starts_with("textures/")).map(|(n,b)| (n.rsplit('/').next().unwrap().to_string(),t.file("texture",b))).into_iter().collect();
+        PackageInput { map_path, map_entry_name: if p.contains_key("level.vmf"){"level.vmf".into()}else{"level.map".into()}, map_bytes:p.iter().find(|(n,_)|n.starts_with("level.")).unwrap().1.clone(), preview:None, icon:None, texture_files:tex, mapping_csv:p.get("mapping.csv").cloned(), level_uuid:UUID.into() }
     }
+    fn archive(path:&Path)->BTreeMap<String,Vec<u8>> { let mut z=ZipArchive::new(File::open(path).unwrap()).unwrap(); let mut m=BTreeMap::new(); for i in 0..z.len(){let mut f=z.by_index(i).unwrap();let mut b=vec![];f.read_to_end(&mut b).unwrap();assert!(m.insert(f.name().to_string(),b).is_none(), "duplicate ZIP entry");}m }
+    fn check_manifest(m:&BTreeMap<String,Vec<u8>>, c:&Value) { let v:Value=serde_json::from_slice(&m["ivl-manifest.json"]).unwrap(); assert_eq!(v.as_object().unwrap().len(),5); assert_eq!(v["ivl_schema_version"],1);assert_eq!(v["content_hash_version"],1);assert_eq!(v["level_uuid"],UUID);assert_eq!(v["content_hash"],c["content_hash"]);assert_eq!(v["files"],c["inventory"]); for f in v["files"].as_array().unwrap(){assert_eq!(f.as_object().unwrap().len(),3);} }
+    fn emit(t:&Temp,c:&Value)->BTreeMap<String,Vec<u8>> { let i=input(t,c);let p=prepare_archive(&i).unwrap();let out=t.0.join("out.ivl");let size=create_archive(&out,&p).unwrap();assert_eq!(size,fs::metadata(&out).unwrap().len());archive(&out) }
 
-    // Add textures, flattened: textures/<basename>. BTreeMap iteration
-    // is byte-ordered, so archive entries are deterministic.
-    for (file_name, tex_path) in &input.texture_files {
-        let archive_path = format!("textures/{}", file_name);
-        zip.start_file(&archive_path, options)
-            .map_err(|e| CompileError::ZipWriteFailed(e.to_string()))?;
-
-        let mut src_file = File::open(tex_path)
-            .map_err(|e| CompileError::ZipWriteFailed(format!("Failed to open {}: {}", tex_path.display(), e)))?;
-        let mut buf = Vec::new();
-        src_file.read_to_end(&mut buf)
-            .map_err(|e| CompileError::ZipWriteFailed(format!("Failed to read {}: {}", tex_path.display(), e)))?;
-        zip.write_all(&buf)
-            .map_err(|e| CompileError::ZipWriteFailed(e.to_string()))?;
+    #[test] fn test_package_manifest_matches_frozen_payloads(){for n in ["map_only","vmf_only","full"]{let t=Temp::new();let c=case(n);let expected=payloads(&c);let m=emit(&t,&c);for (p,b) in expected{assert_eq!(m[&p],b);}assert_eq!(m.len(),payloads(&c).len()+1);check_manifest(&m,&c); let source=payloads(&c).into_iter().find(|(p,_)|p.starts_with("level.")).unwrap().1; assert_eq!(fs::read(t.0.join("source.map")).unwrap(),source);}}
+    #[test] fn test_package_preparation_freezes_payload_bytes(){let t=Temp::new();let c=case("full");let mut i=input(&t,&c);let tex=i.texture_files.values().next().unwrap().clone();let p=prepare_archive(&i).unwrap();fs::write(&tex,b"changed").unwrap();fs::remove_file(&tex).unwrap();fs::write(&i.map_path,b"changed map").unwrap();i.map_bytes=b"changed buffer".to_vec();i.mapping_csv=Some(b"changed csv".to_vec());let out=t.0.join("out.ivl");create_archive(&out,&p).unwrap();let m=archive(&out);for (n,b) in payloads(&c){assert_eq!(m[&n],b);}check_manifest(&m,&c);}
+    #[test] fn test_package_listing_images_do_not_change_identity(){let t=Temp::new();let c=case("full");let mut a=input(&t,&c);a.preview=Some(PreviewData{path:"p".into(),normalized:ImageBuffer::from_pixel(512,512,Rgb([1,2,3]))});a.icon=Some(IconData{path:"i".into(),normalized:ImageBuffer::from_pixel(128,128,Rgb([4,5,6]))});let p=prepare_archive(&a).unwrap();let o=t.0.join("a.ivl");create_archive(&o,&p).unwrap();let one=archive(&o);a.preview.as_mut().unwrap().normalized=ImageBuffer::from_pixel(512,512,Rgb([8,9,10]));a.icon.as_mut().unwrap().normalized=ImageBuffer::from_pixel(128,128,Rgb([11,12,13]));let p=prepare_archive(&a).unwrap();create_archive(&o,&p).unwrap();let two=archive(&o);assert_ne!(one["preview.png"],two["preview.png"]);assert_ne!(one["icon.png"],two["icon.png"]);for key in ["preview.png","icon.png"]{image::load_from_memory(&two[key]).unwrap();}check_manifest(&two,&c);assert_eq!(one["ivl-manifest.json"],two["ivl-manifest.json"]);for n in ["full_changed","full_renamed"]{let x=case(n);let m=emit(&t,&x);check_manifest(&m,&x);assert_ne!(x["content_hash"],c["content_hash"]);} assert_ne!(case("full_changed")["content_hash"],case("full_renamed")["content_hash"]);}
+    #[test] fn test_package_failures_preserve_existing_output(){let t=Temp::new();let c=case("full");let i=input(&t,&c);let p=prepare_archive(&i).unwrap();let out=t.0.join("output.ivl");create_archive(&out,&p).unwrap();let original=fs::read(&out).unwrap();fs::write(t.0.join("output.ivl.tmp"),b"sentinel").unwrap();let mut bad=input(&t,&c);bad.texture_files.insert("test.PNG".into(),t.0.join("missing"));assert!(prepare_archive(&bad).is_err());assert_eq!(fs::read(&out).unwrap(),original);let mut bad=input(&t,&c);bad.texture_files.insert("../escape.PNG".into(),bad.texture_files.values().next().unwrap().clone());assert!(prepare_archive(&bad).is_err());assert_eq!(fs::read(&out).unwrap(),original);let dest=t.0.join("destination");fs::create_dir(&dest).unwrap();fs::write(dest.join("marker"),b"kept").unwrap();assert!(create_archive(&dest,&p).is_err());assert_eq!(fs::read(dest.join("marker")).unwrap(),b"kept");assert_eq!(fs::read(t.0.join("output.ivl.tmp")).unwrap(),b"sentinel");
+        t.assert_clean(&["source.map","texture","output.ivl","output.ivl.tmp","destination"]);
+        #[cfg(windows)] {
+            use std::os::windows::fs::OpenOptionsExt;
+            let lock=OpenOptions::new().read(true).share_mode(0).open(&out).unwrap();
+            assert!(create_archive(&out,&p).is_err());
+            drop(lock);
+            assert_eq!(fs::read(&out).unwrap(),original);
+            assert_eq!(fs::read(t.0.join("output.ivl.tmp")).unwrap(),b"sentinel");
+            t.assert_clean(&["source.map","texture","output.ivl","output.ivl.tmp","destination"]);
+        }
     }
-
-    zip.finish()
-        .map_err(|e| CompileError::ZipWriteFailed(e.to_string()))?;
-
-    // Atomic rename
-    std::fs::rename(&tmp_path, output_path)
-        .map_err(|e| CompileError::OutputWriteFailed(output_path.to_path_buf(), e))?;
-
-    let size = std::fs::metadata(output_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
-
-    Ok(size)
 }
