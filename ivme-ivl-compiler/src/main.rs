@@ -1,4 +1,5 @@
 mod cli;
+mod content_identity;
 mod error;
 mod map;
 mod mapping;
