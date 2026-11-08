@@ -11,6 +11,7 @@ A standalone command-line tool that compiles TrenchBroom `.map` projects into se
 - Detects orphaned textures
 - Validates checkpoint counts and game modes
 - Atomic output with dry-run support
+- Writes a versioned `ivl-manifest.json` with a deterministic content identity
 
 ## Requirements
 
@@ -70,6 +71,23 @@ Initialization fills a missing or empty UUID and preserves an existing valid one
 Running it again leaves valid metadata unchanged. Re-authoring a distinct work requires
 a new UUID. It creates no archive and conflicts with compilation flags, including
 `--dry-run`. Normal compilation and dry-run never rewrite the source.
+
+## Package contract
+
+Each `.ivl` contains a root `ivl-manifest.json` with `ivl_schema_version: 1`,
+`content_hash_version: 1`, the source `level_uuid`, `content_hash`, and a `files`
+array. The array lists ASCII-sorted payload paths with their byte sizes and SHA-256
+digests. The source, `mapping.csv`, and admitted PNG/TGA textures are payloads;
+root `preview.png` and `icon.png` are listing images excluded from the
+payload inventory and cannot be runtime assets.
+
+Changing an admitted payload's bytes or path, including source comments or metadata,
+changes the content identity. Listing image edits, recompression, and ZIP entry order
+do not. Compile and dry-run preserve source bytes, including a UTF-8 BOM. Rebuild
+older IVLs with the current compiler to add this manifest. The manifest is recomputed
+package data, not an author or master signature; signing, publication, and author
+replay are later steps. Archive output is replaced atomically, preserving an existing
+valid archive if compilation fails.
 
 ## Project Structure
 

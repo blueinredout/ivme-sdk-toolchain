@@ -522,3 +522,48 @@ fn test_fz_both_teams_compile() {
 
     let _ = fs::remove_file(&output);
 }
+use base64::Engine as _;
+use serde_json::Value;
+use std::io::Read as _;
+use zip::ZipArchive;
+
+const PACKAGE_GOLDEN: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../contracts/record-package-v1.json"));
+fn package_case(n: &str) -> (Value, Vec<u8>) {
+    let doc: Value = serde_json::from_str(PACKAGE_GOLDEN).unwrap();
+    let c = doc["cases"].as_array().unwrap().iter().find(|c| c["name"] == n).unwrap().clone();
+    let bytes = base64::engine::general_purpose::STANDARD.decode(c["files"][0]["bytes_base64"].as_str().unwrap()).unwrap();
+    (c, bytes)
+}
+fn package_read(path: &Path) -> (std::collections::BTreeMap<String, Vec<u8>>, Vec<u8>) {
+    let mut z = ZipArchive::new(fs::File::open(path).unwrap()).unwrap();
+    let mut files = std::collections::BTreeMap::new(); let mut names = Vec::new();
+    for i in 0..z.len() { let mut f=z.by_index(i).unwrap(); names.push(f.name().to_owned()); let mut b=Vec::new(); f.read_to_end(&mut b).unwrap(); assert!(files.insert(f.name().to_owned(),b).is_none()); }
+    names.sort(); assert_eq!(names.len(),files.len()); (files,names.into_iter().flat_map(|s|s.into_bytes()).collect())
+}
+fn package_compile(src: &Path, out: &Path, extra: &[String]) -> (String,String,i32) {
+    let mut args=vec!["--map".to_owned(),src.to_string_lossy().into_owned(),"--output".into(),out.to_string_lossy().into_owned()]; args.extend_from_slice(extra);
+    run_compiler(&args.iter().map(String::as_str).collect::<Vec<_>>())
+}
+fn package_check(m: &std::collections::BTreeMap<String,Vec<u8>>, c:&Value) {
+    let v:Value=serde_json::from_slice(&m["ivl-manifest.json"]).unwrap(); assert_eq!(v.as_object().unwrap().len(),5);
+    assert_eq!(v["ivl_schema_version"],1);assert_eq!(v["content_hash_version"],1);assert_eq!(v["level_uuid"],"550e8400-e29b-41d4-a716-446655440000");assert_eq!(v["content_hash"],c["content_hash"]);assert_eq!(v["files"],c["inventory"]);
+    for f in v["files"].as_array().unwrap(){assert_eq!(f.as_object().unwrap().len(),3);}
+}
+#[test]
+fn test_manifest_cli_map_vmf_golden_outputs() {
+    for (name,ext) in [("map_only","map"),("vmf_only","vmf")] { let(c,b)=package_case(name);let f=OwnedMetadataFixture::new();let src=f.source(ext);let out=f.output();fs::write(&src,&b).unwrap();let(o,e,x)=package_compile(&src,&out,&[]);assert_eq!(x,0,"{o}\n{e}");assert_eq!(fs::read(&src).unwrap(),b);let(m,_)=package_read(&out);assert_eq!(m.len(),2);assert_eq!(m[&format!("level.{ext}")],b);package_check(&m,&c);let(o,e,x)=package_compile(&src,&out,&[]);assert_eq!(x,0,"{o}\n{e}");let(m2,_)=package_read(&out);assert_eq!(m["ivl-manifest.json"],m2["ivl-manifest.json"]);assert_eq!(m[&format!("level.{ext}")],m2[&format!("level.{ext}")]);assert_eq!(fs::read_dir(&f.root).unwrap().count(),2); }
+}
+#[test]
+fn test_manifest_cli_listing_edits_and_payload_change() {
+    let(c,b)=package_case("map_only");let f=OwnedMetadataFixture::new();let src=f.source("map");let out=f.output();fs::write(&src,&b).unwrap();
+    let p=f.root.join("preview.png");let i=f.root.join("icon.png");image::RgbImage::from_pixel(512,512,image::Rgb([1,2,3])).save(&p).unwrap();image::RgbImage::from_pixel(128,128,image::Rgb([4,5,6])).save(&i).unwrap();
+    let(o,e,x)=package_compile(&src,&out,&[]);assert_eq!(x,0,"{o}\n{e}");let(m,_)=package_read(&out);let first=m["preview.png"].clone();let first_icon=m["icon.png"].clone();package_check(&m,&c);
+    image::RgbImage::from_pixel(512,512,image::Rgb([7,8,9])).save(&p).unwrap();image::RgbImage::from_pixel(128,128,image::Rgb([10,11,12])).save(&i).unwrap();let(o,e,x)=package_compile(&src,&out,&[]);assert_eq!(x,0,"{o}\n{e}");let(m,_)=package_read(&out);assert_ne!(m["preview.png"],first);assert_ne!(m["icon.png"],first_icon);image::load_from_memory(&m["preview.png"]).unwrap();image::load_from_memory(&m["icon.png"]).unwrap();package_check(&m,&c);assert_eq!(fs::read(&src).unwrap(),b);
+    let mut changed=b.clone();changed.extend_from_slice(b"// changed\n");fs::write(&src,&changed).unwrap();let(o,e,x)=package_compile(&src,&out,&[]);assert_eq!(x,0,"{o}\n{e}");let(m,_)=package_read(&out);assert_eq!(m["level.map"],changed);let v:Value=serde_json::from_slice(&m["ivl-manifest.json"]).unwrap();assert_eq!(v["level_uuid"],"550e8400-e29b-41d4-a716-446655440000");assert_eq!(v["content_hash"],"d7b779ec65553109cf22b83cdd515b19ef44c5840b13511f39eb291ff86ab7a2");assert_eq!(v["files"].as_array().unwrap().len(),1);assert_eq!(v["files"][0]["path"],"level.map");assert_eq!(v["files"][0]["size_bytes"],248);assert_eq!(v["files"][0]["sha256"],"1ddf1ccb3f84d6ba3c28d90493c9117d624ac599d1dfef617fc9c57378cd2994");assert_eq!(fs::read(&src).unwrap(),changed);
+}
+#[test]
+fn test_manifest_cli_bom_dry_run_and_invalid_utf8() {
+    let(c,b)=package_case("map_only");let f=OwnedMetadataFixture::new();let src=f.source("map");let out=f.output();let mut bom=vec![0xef,0xbb,0xbf];bom.extend_from_slice(&b);fs::write(&src,&bom).unwrap();let(o,e,x)=package_compile(&src,&out,&[]);assert_eq!(x,0,"{o}\n{e}");let original=fs::read(&out).unwrap();let(m,_)=package_read(&out);assert_eq!(m["level.map"],bom);let v:Value=serde_json::from_slice(&m["ivl-manifest.json"]).unwrap();assert_eq!(v["content_hash"],"b218e7ef160f84be39004e716f586590cb6027b8d2365efe34546d120a5b0e4f");assert_eq!(v["files"].as_array().unwrap().len(),1);assert_eq!(v["files"][0]["path"],"level.map");assert_eq!(v["files"][0]["size_bytes"],240);assert_eq!(v["files"][0]["sha256"],"002ccd871ad9d01a832ef6c2e6f5c9bb86e5c958860ad22729777d10d6da42e6");assert_eq!(m["ivl-manifest.json"].len()>0,true);let snap=fs::read(&src).unwrap();let(o,e,x)=package_compile(&src,&out,&["--dry-run".into()]);assert_eq!(x,0,"{o}\n{e}");assert_eq!(fs::read(&src).unwrap(),snap);assert_eq!(fs::read(&out).unwrap(),original);
+    fs::write(&src,[0xff,0xfe]).unwrap();for extra in [&[][..],&["--dry-run".into()][..]]{let(o,e,x)=package_compile(&src,&out,extra);assert_ne!(x,0,"{o}\n{e}");assert!(format!("{o}{e}").to_lowercase().contains("utf"),"{o}\n{e}");assert_eq!(fs::read(&src).unwrap(),[0xff,0xfe]);assert_eq!(fs::read(&out).unwrap(),original);}
+    let absent=f.root.join("absent.ivl");fs::write(&src,&b).unwrap();let(o,e,x)=package_compile(&src,&absent,&["--dry-run".into()]);assert_eq!(x,0,"{o}\n{e}");assert!(!absent.exists());assert_eq!(fs::read(&src).unwrap(),b);assert_eq!(fs::read_dir(&f.root).unwrap().count(),2);let _=c;
+}
