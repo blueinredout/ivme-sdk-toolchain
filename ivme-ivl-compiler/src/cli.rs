@@ -2,7 +2,11 @@ use clap::Parser;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
-#[command(name = "ivlc", about = "Compiles TrenchBroom .map projects into .ivl archives", arg_required_else_help = true)]
+#[command(
+    name = "ivlc",
+    about = "Compiles TrenchBroom .map projects into .ivl archives",
+    arg_required_else_help = true
+)]
 pub struct Cli {
     /// Path to level.map or level.vmf
     #[arg(long = "map")]
@@ -33,4 +37,8 @@ pub struct Cli {
     /// Validate only, do not create the archive
     #[arg(long = "dry-run")]
     pub dry_run: bool,
+
+    /// Initialize persistent level metadata in the source file; does not compile an archive
+    #[arg(long = "init-metadata", conflicts_with_all = ["dry_run", "output", "preview", "icon", "mapping"])]
+    pub init_metadata: bool,
 }

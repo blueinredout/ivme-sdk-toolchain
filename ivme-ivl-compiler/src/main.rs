@@ -104,6 +104,11 @@ fn run(cli: Cli) -> Result<(), CompileError> {
                 .to_string(),
         ));
     }
+    if cli.init_metadata {
+        let changed = metadata_init::initialize_file(&map_path, is_vmf)?;
+        println!("Metadata initialization {}.", if changed { "initialized" } else { "unchanged" });
+        return Ok(());
+    }
     let map_entry_name = if is_vmf { "level.vmf" } else { "level.map" }.to_string();
 
     let map_dir = map_path.parent()

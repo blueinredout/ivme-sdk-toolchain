@@ -2,6 +2,44 @@ use crate::{
     error::CompileError,
     metadata::{decode_ascii_decimal, validate_extended_metadata, LevelMetadata},
 };
+use std::{
+    fs::{self, OpenOptions},
+    io::Write,
+    path::Path,
+};
+
+pub(crate) fn initialize_file(path: &Path, is_vmf: bool) -> Result<bool, CompileError> {
+    let original =
+        fs::read(path).map_err(|e| CompileError::MapUnreadable(path.to_path_buf(), e))?;
+    let source = std::str::from_utf8(&original)
+        .map_err(|e| CompileError::InvalidExtendedMetadata(format!("invalid UTF-8: {e}")))?;
+    let uuid = uuid::Uuid::new_v4().to_string();
+    let output = initialize_source(source, is_vmf, &uuid)?;
+    if output.as_bytes() == original {
+        return Ok(false);
+    }
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let filename = path.file_name().unwrap_or_default().to_string_lossy();
+    let temp = parent.join(format!("{filename}.{}.tmp", uuid));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)
+        .map_err(|e| CompileError::OutputWriteFailed(temp.clone(), e))?;
+    let result = file
+        .write_all(output.as_bytes())
+        .and_then(|_| file.sync_all());
+    drop(file);
+    if let Err(e) = result {
+        let _ = fs::remove_file(&temp);
+        return Err(CompileError::OutputWriteFailed(temp, e));
+    }
+    if let Err(e) = fs::rename(&temp, path) {
+        let _ = fs::remove_file(&temp);
+        return Err(CompileError::OutputWriteFailed(path.to_path_buf(), e));
+    }
+    Ok(true)
+}
 
 #[derive(Clone)]
 struct Token {

@@ -9,6 +9,7 @@ clap.workspace = true
 colored.workspace = true
 image.workspace = true
 zip.workspace = true
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 image.workspace = true
