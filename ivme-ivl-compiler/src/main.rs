@@ -3,6 +3,7 @@ mod error;
 mod map;
 mod mapping;
 mod metadata;
+mod metadata_init;
 mod package;
 mod preview;
 mod textures;
