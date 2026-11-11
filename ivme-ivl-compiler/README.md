@@ -89,6 +89,24 @@ package data, not an author or master signature; signing, publication, and autho
 replay are later steps. Archive output is replaced atomically, preserving an existing
 valid archive if compilation fails.
 
+## Record identity (Phase 2)
+
+The `content_hash` in `ivl-manifest.json` is the identity the IVME server
+registers a release under. It is a domain-separated SHA-256 over the payload
+inventory (`IVME-CONTENT\0` + version + path/size/digest records), so it is
+independent of ZIP entry order, recompression and listing images, and changes with
+any payload byte or path.
+
+Server side (`.aiguide/level-metadata-phase2-contract.md`, sections 11–13): an
+offline operator registers a deployment manifest that pins the release to its
+content hash, level UUID, course, medal targets and ruleset. The server recomputes
+or re-validates that identity from the installed artifact before a run can be
+admitted, so a rebuilt archive with different bytes cannot inherit an existing
+release's records.
+
+Rebuild older IVLs with the current compiler before registering them: an archive
+without `ivl-manifest.json` cannot be registered.
+
 ## Project Structure
 
 ```
