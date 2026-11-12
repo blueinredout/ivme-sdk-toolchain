@@ -1,6 +1,8 @@
 mod cli;
 mod content_identity;
 mod author_evidence;
+#[allow(dead_code)] // Claim verification API is intentionally not wired to CLI flows.
+mod author_release;
 mod error;
 mod map;
 mod mapping;
