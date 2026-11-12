@@ -8,6 +8,8 @@ mod metadata;
 mod metadata_init;
 mod package;
 mod preview;
+#[allow(dead_code)] // Cryptographic API is intentionally in-memory and not wired to CLI flows.
+mod signed_envelope;
 mod textures;
 mod validation;
 

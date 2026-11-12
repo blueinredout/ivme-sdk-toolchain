@@ -1,0 +1,10 @@
+{
+  "fixture": "Public throwaway key; cryptographic framing only, no typed release/approval authority.",
+  "algorithm": "rsa3072-sha256-pkcs1-v1_5",
+  "kind": 1,
+  "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEA2jn8pVeE7/xERw2ZeJ7+\nAgBy7uTNwNSPJWztIABS5jTMOlrs6wsqofD6hoNqNfDxp3DJbJoROA1FxtYLqY6z\nWDPOy0gpGY8j0fHWyEl/X78yxarg3uBnV4RHyznFbmZ1+Vr4bBCEvJTiicWjAyNL\nz2mkZDTWIjBK+THBGUywrfzhwyvFBChFbKdEBhPG72p2V/pUzxrmtEh8ot6A6ceT\nSBcetbsy5dUXUvuOXVu9jLe8JjtUkW1E8F05Fffd/8wjPahCVkHc6foZ395xGoTL\nNd3gv01Pp7yY9ai+9BwdK9eyuTBQs/bB/3ifz2H0Q6g3+Y7L1Wb+pJRHtN/Po14Y\nKvDWTiTTrzahbohQ9kHEQOUGoYr4udQduG4oI3E8e9wkfAIxwLGsxCxjgiU2wzAU\nATUirmLrokxnXVhMF7N1KWP2i9V1Yaa3fDC/dbLV+7g6uQC8uGpi7u61h/jeAbJh\nc3Z5ckggbLxDqEjIIvGxY3oVuQc9DBupvA4uv8agoPpzAgMBAAE=\n-----END PUBLIC KEY-----\n",
+  "key_id": "e64d48eab483a2d48eb38fc43ca65d3b8596512ac8179f67a769160b03fb2c03",
+  "body_base64": "UHVibGljIGR1bW15IHJlbGVhc2UtZnJhbWluZyB2ZWN0b3IuIE5vdCBhbiBhcHByb3ZlZCByZWxlYXNlLgo=",
+  "envelope_base64": "SVZTRwEBAAA+AAAA5k1I6rSDotSOs4/EPKZdO4WWUSrIF59np2kWCwP7LANQdWJsaWMgZHVtbXkgcmVsZWFzZS1mcmFtaW5nIHZlY3Rvci4gTm90IGFuIGFwcHJvdmVkIHJlbGVhc2UuClrsJVGA0rCTf64MxMkHRU6qFn4L5N6Xod6V88gYULhqlqWpdkfepk/fIiK4Uiy0TeZc4OD/6p0nTuJbmPRq3TCXaP2JrlL92X2FdIOuN6BQR5YBLrV3zmPya2+XZuAtcPoVPsQiw5EXRIzCcIoTl/pERtb/U1m/qE3qEI+8EXzNjE3+l1XihkPtHbh/u+TQziplAXUlQpWvJkcTpWf0j9G+vmYb5BjnrR3JSZOUfpCoes/iixT3uw0VKGlGQtdBJ+CYTSk4hqMCOMXS4lVmhrD4SrFSQoPLsLR2N2xcU7i3ZZJ3Kba4zAwZUinPg2ZixzuYizdw3ojqYShpkxebdrUbJ6TBAcZuWU3z0EAi1tMw9hdTMVoGUFtm1JkSygk5vLMSL/jMVqyMFm36b0J5gwY/y3GR8zXl6wIWRra9YVx37hsXcz3DLybyXIdb8BAV3PzZ2aGJqe3IHD1k0bwqCYBXjk0cnHdEcxbKlrd8F8hpdCLJSLdBRygGSV69acx9dQ==",
+  "message_sha256": "50284b1bfd71313fa62b342945c527be8a2e7032150c6ed892523fcc36a79e26"
+}
