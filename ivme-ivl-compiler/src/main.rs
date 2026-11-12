@@ -3,6 +3,8 @@ mod content_identity;
 mod author_evidence;
 #[allow(dead_code)] // Claim verification API is intentionally not wired to CLI flows.
 mod author_release;
+#[allow(dead_code)] // Typed approval verification is intentionally not wired to CLI flows.
+mod master_approval;
 mod author_keys;
 mod author_release_cli;
 mod error;
