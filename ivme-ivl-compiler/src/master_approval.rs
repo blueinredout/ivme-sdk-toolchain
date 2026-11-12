@@ -172,6 +172,3 @@ mod tests {
         assert_eq!(verified.canonical_body, decode(&master, "body_base64"));
     }
 }
-
-
-
