@@ -1,6 +1,8 @@
 use crate::content_identity::{hash_payload, FileDescriptor, PayloadEntry};
 use crate::error::CompileError;
 use crate::preview::{IconData, PreviewData};
+use crate::author_evidence::DecodedAuthorEvidence;
+use crate::metadata::{validate_extended_metadata, LevelMetadata};
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -28,6 +30,18 @@ pub struct PreparedArchive {
 }
 
 pub fn prepare_archive(input: &PackageInput) -> Result<PreparedArchive, CompileError> {
+    prepare_archive_inner(input, None)
+}
+
+/// Decode and prepare one explicitly supplied IVAE as an inert schema-2 attachment.
+pub fn prepare_archive_with_author(input: &PackageInput, evidence_bytes: &[u8], source: &LevelMetadata) -> Result<PreparedArchive, CompileError> {
+    if source.game_mode != "std" { return Err(CompileError::AuthorEvidence("evidence game mode does not match source metadata".into())); }
+    let source_scope = validate_extended_metadata(source)?;
+    let evidence = crate::author_evidence::decode(evidence_bytes).map_err(|e| CompileError::AuthorEvidence(e.to_string()))?;
+    prepare_archive_inner(input, Some((evidence, source_scope)))
+}
+
+fn prepare_archive_inner(input: &PackageInput, author: Option<(DecodedAuthorEvidence, crate::metadata::ExtendedMetadata)>) -> Result<PreparedArchive, CompileError> {
     let mut files = vec![ArchiveFile { path: input.map_entry_name.clone(), data: input.map_bytes.clone() }];
     if let Some(csv) = &input.mapping_csv { files.push(ArchiveFile { path: "mapping.csv".into(), data: csv.clone() }); }
     for (name, source) in &input.texture_files {
@@ -38,19 +52,36 @@ pub fn prepare_archive(input: &PackageInput) -> Result<PreparedArchive, CompileE
     let icon = input.icon.as_ref().map(|i| crate::preview::encode_png_size(&i.normalized, 128));
     let mut payload: Vec<PayloadEntry> = files.iter().map(|f| PayloadEntry { path: f.path.clone(), data: f.data.clone(), is_directory: false }).collect();
     let hash = hash_payload(&payload)?;
-    let manifest = serde_json::json!({
+    let mut manifest = serde_json::json!({
         "ivl_schema_version": 1,
         "content_hash_version": 1,
         "level_uuid": input.level_uuid,
         "content_hash": hash.content_hash,
         "files": hash.files.iter().map(|f: &FileDescriptor| serde_json::json!({"path":f.path,"size_bytes":f.size_bytes,"sha256":f.sha256})).collect::<Vec<_>>(),
     });
+    if let Some((evidence, source)) = author {
+        let expected_targets = [source.bronze_time_ms, source.silver_time_ms, source.gold_time_ms];
+        if evidence.level_uuid != source.level_uuid || input.level_uuid != source.level_uuid
+            || evidence.content_hash_version != 1 || evidence.content_hash != hash.content_hash
+            || evidence.targets != expected_targets {
+            return Err(CompileError::AuthorEvidence("evidence identity or target snapshot does not match the prepared source payload".into()));
+        }
+        manifest["ivl_schema_version"] = 2.into();
+        manifest["author_evidence"] = serde_json::json!({"path":"author-run.ivae", "size_bytes":evidence.bytes.len(), "sha256":hex(&evidence.sha256)});
+        files.push(ArchiveFile { path: "author-run.ivae".into(), data: evidence.bytes });
+    }
+    let manifest_bytes = serde_json::to_vec(&manifest).map_err(|e| CompileError::ZipWriteFailed(e.to_string()))?;
+    if manifest["ivl_schema_version"] == 2 && manifest_bytes.len() > 1_048_576 {
+        return Err(CompileError::AuthorEvidence("schema-2 manifest exceeds 1048576 bytes".into()));
+    }
     files.extend(preview.map(|data| ArchiveFile { path: "preview.png".into(), data }));
     files.extend(icon.map(|data| ArchiveFile { path: "icon.png".into(), data }));
-    files.push(ArchiveFile { path: "ivl-manifest.json".into(), data: serde_json::to_vec(&manifest).map_err(|e| CompileError::ZipWriteFailed(e.to_string()))? });
+    files.push(ArchiveFile { path: "ivl-manifest.json".into(), data: manifest_bytes });
     payload.clear();
     Ok(PreparedArchive { files })
 }
+
+fn hex(bytes: &[u8]) -> String { bytes.iter().map(|b| format!("{b:02x}")).collect() }
 
 pub fn create_archive(output_path: &Path, prepared: &PreparedArchive) -> Result<u64, CompileError> {
     let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
@@ -91,6 +122,7 @@ mod tests {
     use zip::ZipArchive;
 
     const FIXTURE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../contracts/record-package-v1.json"));
+    const V2_FIXTURE: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../contracts/record-package-v2.json"));
     const UUID: &str = "550e8400-e29b-41d4-a716-446655440000";
     struct Temp(PathBuf);
     impl Temp {
@@ -130,5 +162,35 @@ mod tests {
             assert_eq!(fs::read(t.0.join("output.ivl.tmp")).unwrap(),b"sentinel");
             t.assert_clean(&["source.map","texture","output.ivl","output.ivl.tmp","destination"]);
         }
+    }
+
+    #[test]
+    fn test_author_schema2_matches_independent_golden_and_default_stays_v1() {
+        use sha2::{Digest, Sha256};
+        let fixture: Value = serde_json::from_str(V2_FIXTURE).unwrap();
+        let golden = base64::engine::general_purpose::STANDARD.decode(fixture["archive_base64"].as_str().unwrap()).unwrap();
+        let mut golden_zip = ZipArchive::new(std::io::Cursor::new(golden)).unwrap();
+        let read_entry = |zip: &mut ZipArchive<std::io::Cursor<Vec<u8>>>, name: &str| { let mut file=zip.by_name(name).unwrap(); let mut bytes=Vec::new(); file.read_to_end(&mut bytes).unwrap(); bytes };
+        let source = read_entry(&mut golden_zip, "level.map");
+        let evidence_bytes = read_entry(&mut golden_zip, "author-run.ivae");
+        let expected_manifest_bytes = read_entry(&mut golden_zip, "ivl-manifest.json");
+        let temp = Temp::new();
+        let input = PackageInput { map_path:temp.file("source.map", &source), map_entry_name:"level.map".into(), map_bytes:source, preview:None, icon:None, texture_files:BTreeMap::new(), mapping_csv:None, level_uuid:"550e8400-e29b-41d4-a716-446655440000".into() };
+        let source_metadata = LevelMetadata { course_id:"golden".into(), level_name:"Golden".into(), level_creator:"Tester".into(), level_description:String::new(), game_mode:"std".into(), checkpoints:0, metadata_schema_version:Some("1".into()), level_uuid:Some(input.level_uuid.clone()), bronze_time_ms:Some("60000".into()), silver_time_ms:Some("45000".into()), gold_time_ms:Some("30000".into()) };
+        let v2 = prepare_archive_with_author(&input, &evidence_bytes, &source_metadata).unwrap();
+        let out = temp.0.join("v2.ivl"); create_archive(&out, &v2).unwrap();
+        let entries = archive(&out);
+        assert_eq!(entries["level.map"], input.map_bytes);
+        assert_eq!(entries["author-run.ivae"], evidence_bytes);
+        let manifest_bytes = &entries["ivl-manifest.json"];
+        let manifest: Value = serde_json::from_slice(manifest_bytes).unwrap();
+        assert_eq!(*manifest_bytes, expected_manifest_bytes);
+        assert_eq!(manifest["files"][0]["sha256"], format!("{:x}", Sha256::digest(&input.map_bytes)));
+        assert_eq!(manifest["author_evidence"]["sha256"], format!("{:x}", Sha256::digest(&evidence_bytes)));
+        let v1 = prepare_archive(&input).unwrap();
+        let out_v1 = temp.0.join("v1.ivl"); create_archive(&out_v1, &v1).unwrap();
+        let v1_entries = archive(&out_v1);
+        assert!(!v1_entries.contains_key("author-run.ivae"));
+        assert_eq!(serde_json::from_slice::<Value>(&v1_entries["ivl-manifest.json"]).unwrap()["ivl_schema_version"], 1);
     }
 }

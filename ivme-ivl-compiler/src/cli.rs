@@ -30,6 +30,10 @@ pub struct Cli {
     #[arg(long = "mapping")]
     pub mapping: Vec<PathBuf>,
 
+    /// Explicit local IVAE to attach as inert author evidence (schema 2).
+    #[arg(long = "author-evidence", conflicts_with = "init_metadata")]
+    pub author_evidence: Option<PathBuf>,
+
     /// Output .ivl path
     #[arg(long = "output")]
     pub output: Option<PathBuf>,
@@ -39,6 +43,6 @@ pub struct Cli {
     pub dry_run: bool,
 
     /// Initialize persistent level metadata in the source file; does not compile an archive
-    #[arg(long = "init-metadata", conflicts_with_all = ["dry_run", "output", "preview", "icon", "mapping"])]
+    #[arg(long = "init-metadata", conflicts_with_all = ["dry_run", "output", "preview", "icon", "mapping", "author_evidence"])]
     pub init_metadata: bool,
 }

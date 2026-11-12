@@ -1,0 +1,29 @@
+{
+  "fixture_schema_version": 1,
+  "description": "Independent Python ZIP/manifest composition from frozen real native entity IVL and IVAE; attachment remains unverified.",
+  "ivl_schema_version": 2,
+  "archive_base64": "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",
+  "archive_sha256": "c853498757fa181810f545cdf298ee8e2d0d33a26f1eb73bd10b624cab5c6def",
+  "expected_manifest": {
+    "content_hash": "d44ed18de9824ec116d927d1d6109192fbfd6ed888feb6d7df778b3a923b4417",
+    "content_hash_version": 1,
+    "files": [
+      {
+        "path": "level.map",
+        "sha256": "c28bc59a0e8d10244887e39e171426cf274d544fd8d89bc83e69daa4009a9c71",
+        "size_bytes": 2165
+      }
+    ],
+    "ivl_schema_version": 2,
+    "level_uuid": "550e8400-e29b-41d4-a716-446655440000",
+    "author_evidence": {
+      "path": "author-run.ivae",
+      "size_bytes": 6501,
+      "sha256": "68c327cf607451ad59e0c57ceb50f20af2fa10eb452b54ee5c2189e2ba3490cc"
+    }
+  },
+  "expected_author_verification_state": "unverified",
+  "expected_author_time_ms": null,
+  "source_fixture": "tests/fixtures/author-entity-route.ivl",
+  "evidence_fixture": "tests/fixtures/author-entity-route.ivae"
+}

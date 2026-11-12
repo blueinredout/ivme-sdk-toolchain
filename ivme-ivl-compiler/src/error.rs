@@ -19,6 +19,8 @@ pub enum CompileError {
     OutputWriteFailed(PathBuf, std::io::Error),
     ZipWriteFailed(String),
     ContentIdentity(crate::content_identity::IdentityError),
+    AuthorEvidence(String),
+    AuthorEvidenceUnreadable(PathBuf, std::io::Error),
 }
 
 impl fmt::Display for CompileError {
@@ -56,6 +58,8 @@ impl fmt::Display for CompileError {
             }
             CompileError::ZipWriteFailed(msg) => write!(f, "ZIP write error: {}", msg),
             CompileError::ContentIdentity(err) => write!(f, "{}", err),
+            CompileError::AuthorEvidence(msg) => write!(f, "Invalid author evidence: {}", msg),
+            CompileError::AuthorEvidenceUnreadable(p, e) => write!(f, "Cannot read author evidence {}: {}", p.display(), e),
         }
     }
 }

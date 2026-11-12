@@ -17,6 +17,7 @@ use colored::Colorize;
 use error::CompileError;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io::Read;
 use std::path::PathBuf;
 use std::process;
 
@@ -78,6 +79,7 @@ fn main() {
 }
 
 fn run(cli: Cli) -> Result<(), CompileError> {
+    if cli.init_metadata && cli.author_evidence.is_some() { return Err(CompileError::AuthorEvidence("--author-evidence cannot be combined with --init-metadata".into())); }
     // 1. Resolve paths
     let map_path = fs::canonicalize(&cli.map)
         .map_err(|_| CompileError::MapNotFound(cli.map.clone()))?;
@@ -274,7 +276,18 @@ fn run(cli: Cli) -> Result<(), CompileError> {
         map_path: map_path.clone(), map_entry_name, map_bytes: map_bytes.to_vec(), preview, icon,
         texture_files, mapping_csv: mapping_table.map(|t| t.csv_bytes), level_uuid,
     };
-    let prepared = package::prepare_archive(&pkg)?;
+    let prepared = if let Some(path) = cli.author_evidence.as_ref() {
+        const MAX_AUTHOR_BYTES: u64 = 22_000_000;
+        let mut file = fs::File::open(path).map_err(|e| CompileError::AuthorEvidenceUnreadable(path.clone(), e))?;
+        let expected = file.metadata().map_err(|e| CompileError::AuthorEvidenceUnreadable(path.clone(), e))?.len();
+        if expected == 0 || expected > MAX_AUTHOR_BYTES { return Err(CompileError::AuthorEvidence("file size is outside supported bounds (maximum 22000000 bytes)".into())); }
+        let mut bytes = Vec::with_capacity(expected as usize);
+        file.by_ref().take(MAX_AUTHOR_BYTES + 1).read_to_end(&mut bytes).map_err(|e| CompileError::AuthorEvidenceUnreadable(path.clone(), e))?;
+        if bytes.len() as u64 != expected || bytes.len() as u64 > MAX_AUTHOR_BYTES {
+            return Err(CompileError::AuthorEvidence("file changed size or could not be read completely".into()));
+        }
+        package::prepare_archive_with_author(&pkg, &bytes, &validation.metadata)?
+    } else { package::prepare_archive(&pkg)? };
 
     // 12. Dry-run check
     if cli.dry_run {

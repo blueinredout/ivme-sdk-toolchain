@@ -188,6 +188,36 @@ fn run_compiler(args: &[&str]) -> (String, String, i32) {
 }
 
 #[test]
+fn test_author_evidence_cli_dry_run_acceptance_and_rejection_preserve_files() {
+    use base64::Engine;
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../contracts/record-package-v2.json"))).unwrap();
+    let golden = base64::engine::general_purpose::STANDARD.decode(fixture["archive_base64"].as_str().unwrap()).unwrap();
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(golden)).unwrap();
+    let mut source = Vec::new(); zip.by_name("level.map").unwrap().read_to_end(&mut source).unwrap();
+    let mut evidence = Vec::new(); zip.by_name("author-run.ivae").unwrap().read_to_end(&mut evidence).unwrap();
+    let f = OwnedMetadataFixture::new();
+    let src = f.root.join("source with spaces.map"); let author = f.root.join("evidence with spaces.ivae"); let output = f.root.join("output with spaces.ivl");
+    fs::write(&src, &source).unwrap(); fs::write(&author, &evidence).unwrap();
+    let src_s=src.to_str().unwrap(); let author_s=author.to_str().unwrap(); let output_s=output.to_str().unwrap();
+    let (out,err,code)=run_compiler(&["--map",src_s,"--author-evidence",author_s,"--output",output_s,"--dry-run"]);
+    assert_eq!(code,0,"{out}\n{err}"); assert!(!output.exists()); assert_eq!(fs::read(&src).unwrap(),source);
+    let (out,err,code)=run_compiler(&["--map",src_s,"--author-evidence",author_s,"--output",output_s]);
+    assert_eq!(code,0,"{out}\n{err}");
+    let mut packaged=zip::ZipArchive::new(fs::File::open(&output).unwrap()).unwrap();
+    let mut attached=Vec::new(); packaged.by_name("author-run.ivae").unwrap().read_to_end(&mut attached).unwrap(); assert_eq!(attached,evidence);
+    let mut manifest_bytes=Vec::new(); packaged.by_name("ivl-manifest.json").unwrap().read_to_end(&mut manifest_bytes).unwrap();
+    let manifest:serde_json::Value=serde_json::from_slice(&manifest_bytes).unwrap(); assert_eq!(manifest["ivl_schema_version"],2);
+    drop(packaged);
+    let original_output=fs::read(&output).unwrap();
+    let (out,err,code)=run_compiler(&["--map",src_s,"--author-evidence",author_s,"--output",output_s,"--dry-run"]);
+    assert_eq!(code,0,"{out}\n{err}"); assert_eq!(fs::read(&output).unwrap(),original_output);
+    fs::write(&author,b"bad IVAE").unwrap();
+    let (out,err,code)=run_compiler(&["--map",src_s,"--author-evidence",author_s,"--output",output_s]);
+    assert_ne!(code,0,"{out}\n{err}"); assert!(format!("{out}{err}").contains("author evidence"));
+    assert_eq!(fs::read(&src).unwrap(),source); assert_eq!(fs::read(&output).unwrap(),original_output);
+}
+
+#[test]
 fn test_happy_path_compilation() {
     setup_fixtures();
     let map = fixtures_dir().join("happy_path/level.map");

@@ -33,6 +33,7 @@ The release binary is produced at `target/release/ivlc` (or `ivlc.exe` on Window
 
 ```
 ivlc --map <path> [--preview <path>] [--icon <path>] [--mapping <path>] [--output <path>] [--dry-run]
+ivlc --map <path> --author-evidence <path> [--output <path>] [--dry-run]
 ivlc --map <path> --init-metadata
 ```
 
@@ -46,6 +47,7 @@ ivlc --map <path> --init-metadata
 | `--mapping <path>` | No | Repeatable explicit mapping inputs; auto-merges `<map_dir>/mapping.csv` and all `<map_dir>/*.mapping.csv` (first wins) |
 | `--output <path>` | No | Output `.ivl` path (defaults to `<map_dir>/<source_file_stem>.ivl`) |
 | `--dry-run` | No | Validate without creating the archive |
+| `--author-evidence <path>` | No | Explicitly attach one strictly decoded local IVAE as inert schema-2 transport data |
 | `--init-metadata` | No | Initialize metadata in the source file without creating an archive |
 
 ### Examples
@@ -72,9 +74,16 @@ Running it again leaves valid metadata unchanged. Re-authoring a distinct work r
 a new UUID. It creates no archive and conflicts with compilation flags, including
 `--dry-run`. Normal compilation and dry-run never rewrite the source.
 
+Ordinary compilation writes schema 1. Supplying `--author-evidence` opts into
+schema 2 and embeds exactly that IVAE after checking it against the prepared
+payload and source target metadata. This is structural transport only: it does
+not verify ownership, certify a target, or grant approval. Evidence time and
+approval are not portable claims; they remain unverified until a separate
+authenticated workflow evaluates them.
+
 ## Package contract
 
-Each `.ivl` contains a root `ivl-manifest.json` with `ivl_schema_version: 1`,
+Default schema-1 packages contain a root `ivl-manifest.json` with `ivl_schema_version: 1`,
 `content_hash_version: 1`, the source `level_uuid`, `content_hash`, and a `files`
 array. The array lists ASCII-sorted payload paths with their byte sizes and SHA-256
 digests. The source, `mapping.csv`, and admitted PNG/TGA textures are payloads;
