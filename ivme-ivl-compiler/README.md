@@ -38,6 +38,7 @@ ivlc --map <path> --init-metadata
 ivlc author-key create [--directory <private-root>]
 ivlc author-key info --key-id <64-hex-id> [--directory <private-root>]
 ivlc author-key prove --challenge <file> --key-id <64-hex-id> --publisher <steam-id> --app-id <app> --output <proof> [--directory <private-root>]
+ivlc author-release sign --intent <file> --package <file> --key-id <64-hex-id> --publisher <steam-id> --app-id <app> --workshop-item-id <item> --output <release> [--directory <private-root>]
 ```
 
 ### Arguments
@@ -98,6 +99,11 @@ creation does not register, bind, rotate, or authorize a key with a server.
 `ivlc author-key prove` signs a bounded canonical server-issued binding challenge
 as a kind-3 proof and writes it to a new output file. It does not contact Steam;
 the server remains authoritative for challenge expiry and account ownership.
+`ivlc author-release sign` signs the exact canonical author intent as a kind-1
+envelope after checking the explicit app, publisher, item, and key context and
+the exact opaque package size and SHA-256. It writes only to a new output file.
+This is an author claim, not archive/evidence validation or server approval; the
+server independently inspects the package and evidence before any approval.
 
 ## Package contract
 

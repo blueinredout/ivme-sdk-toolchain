@@ -25,6 +25,8 @@ struct AuthorKeyCli {
 enum NamespaceCommand {
     #[command(name = "author-key")]
     AuthorKey(AuthorKeyArgs),
+    #[command(name = "author-release")]
+    AuthorRelease(crate::author_release_cli::AuthorReleaseArgs),
 }
 
 #[derive(Args)]
@@ -77,11 +79,13 @@ pub fn dispatch() -> ! {
             process::exit(code);
         }
     };
-    let NamespaceCommand::AuthorKey(args) = parsed.command;
-    let result = match args.command {
-        AuthorKeyCommand::Create(args) => create(args.directory),
-        AuthorKeyCommand::Info(args) => info(&args.key_id, args.directory),
-        AuthorKeyCommand::Prove(args) => prove(args),
+    let result = match parsed.command {
+        NamespaceCommand::AuthorRelease(args) => crate::author_release_cli::sign(args),
+        NamespaceCommand::AuthorKey(args) => match args.command {
+            AuthorKeyCommand::Create(args) => create(args.directory),
+            AuthorKeyCommand::Info(args) => info(&args.key_id, args.directory),
+            AuthorKeyCommand::Prove(args) => prove(args),
+        },
     };
     match result {
         Ok(json) => {
@@ -340,7 +344,7 @@ fn info(key_id: &str, directory: Option<PathBuf>) -> Result<String, String> {
 const MAX_CHALLENGE_BYTES: usize = 4096;
 const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
-fn canonical_decimal_u64(value: &str) -> Result<u64, String> {
+pub(crate) fn canonical_decimal_u64(value: &str) -> Result<u64, String> {
     if value.is_empty()
         || !value.bytes().all(|b| b.is_ascii_digit())
         || (value.len() > 1 && value.starts_with('0'))
@@ -356,7 +360,7 @@ fn canonical_decimal_u64(value: &str) -> Result<u64, String> {
     Ok(parsed)
 }
 
-fn valid_lower_hex(value: &str, len: usize) -> bool {
+pub(crate) fn valid_lower_hex(value: &str, len: usize) -> bool {
     value.len() == len
         && value
             .bytes()
@@ -447,7 +451,7 @@ fn canonical_challenge(
     Ok(challenge_id.to_owned())
 }
 
-fn read_bounded(
+pub(crate) fn read_bounded(
     path: &Path,
     limit: usize,
     description: &str,
@@ -470,6 +474,66 @@ fn read_bounded(
     Ok(bytes)
 }
 
+pub(crate) fn sign_managed(
+    kind: u8, key_id: &str, directory: Option<PathBuf>, body: &[u8],
+) -> Result<Vec<u8>, String> {
+    let public = managed_public_info(key_id, directory)?;
+    if !matches!(kind, 1 | 3) { return Err("unsupported author signature kind".into()); }
+    let private_path = public.directory.join("private.pem");
+    if is_link_or_reparse(&private_path).map_err(|_| "managed private key cannot be inspected")? {
+        return Err("managed private key must be a regular file".into());
+    }
+    let private_bytes = read_bounded(&private_path, 4096, "managed private key")?;
+    let private_pem = std::str::from_utf8(&private_bytes)
+        .map_err(|_| "managed private key is not valid UTF-8")?;
+    let envelope = crate::signed_envelope::sign(kind, body, private_pem)
+        .map_err(|_| "managed private key could not sign the request")?;
+    let verified = crate::signed_envelope::verify(&envelope, &public.pem, kind)
+        .map_err(|_| "managed private key does not match its public key")?;
+    if verified.body != body || hex(&verified.key_id) != key_id {
+        return Err("managed private key does not match its public key".into());
+    }
+    Ok(envelope)
+}
+
+pub(crate) fn output_destination(output: &Path, label: &str) -> Result<PathBuf, String> {
+    let requested = if output.is_absolute() { output.to_path_buf() } else {
+        env::current_dir().map_err(|e| e.to_string())?.join(output)
+    };
+    let file_name = requested.file_name().ok_or("output must name a new file")?;
+    let parent = requested.parent().ok_or("output must name a new file")?;
+    let parent = fs::canonicalize(parent).map_err(|e| format!("output directory cannot be resolved: {e}"))?;
+    let destination = parent.join(file_name);
+    if destination.to_str().is_none() { return Err(format!("{label} output path is not valid UTF-8")); }
+    match fs::symlink_metadata(&destination) {
+        Ok(_) => return Err(format!("{label} output already exists")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
+        Err(e) => return Err(format!("{label} output cannot be inspected: {e}")),
+    }
+    Ok(destination)
+}
+
+pub(crate) fn publish_public(
+    output: &Path, bytes: &[u8], label: &str,
+) -> Result<PathBuf, String> {
+    let destination = output_destination(output, label)?;
+    let parent = destination.parent().ok_or("output must name a new file")?;
+    let temp = parent.join(format!(".ivlc-{label}-{}", uuid::Uuid::new_v4()));
+    let mut owns_temp = false;
+    let result = (|| {
+        let mut options = OpenOptions::new(); options.write(true).create_new(true);
+        #[cfg(unix)] { use std::os::unix::fs::OpenOptionsExt; options.mode(0o600); }
+        let mut file = options.open(&temp).map_err(|e| format!("cannot create {label} staging file: {e}"))?;
+        owns_temp = true;
+        file.write_all(bytes).and_then(|_| file.sync_all()).map_err(|e| format!("cannot persist {label}: {e}"))?;
+        fs::hard_link(&temp, &destination).map_err(|_| format!("{label} output already exists or cannot be published atomically"))?;
+        Ok::<(), String>(())
+    })();
+    if owns_temp { let _ = fs::remove_file(&temp); }
+    result?;
+    Ok(destination)
+}
+
 fn prove(args: ProveArgs) -> Result<String, String> {
     if !valid_lower_hex(&args.key_id, 64) {
         return Err("key ID must be 64 lowercase hexadecimal characters".into());
@@ -485,68 +549,10 @@ fn prove(args: ProveArgs) -> Result<String, String> {
 
     let challenge = read_bounded(&args.challenge, MAX_CHALLENGE_BYTES, "challenge file")?;
     let challenge_id = canonical_challenge(&challenge, &args.key_id, &args.publisher, app_id)?;
-    let requested = if args.output.is_absolute() {
-        args.output
-    } else {
-        env::current_dir()
-            .map_err(|e| e.to_string())?
-            .join(args.output)
-    };
-    let file_name = requested.file_name().ok_or("output must name a new file")?;
-    let parent = requested.parent().ok_or("output must name a new file")?;
-    let parent = fs::canonicalize(parent)
-        .map_err(|e| format!("output directory cannot be resolved: {e}"))?;
-    let destination = parent.join(file_name);
-    let output_path = destination
-        .to_str()
-        .ok_or("proof output path is not valid UTF-8")?;
-    match fs::symlink_metadata(&destination) {
-        Ok(_) => return Err("proof output already exists".into()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
-        Err(error) => return Err(format!("proof output cannot be inspected: {error}")),
-    }
+    output_destination(&args.output, "proof")?;
     // Only inspect the managed private key after every server-body context check has passed.
-    let public = managed_public_info(&args.key_id, args.directory)?;
-    let private_path = public.directory.join("private.pem");
-    if is_link_or_reparse(&private_path).map_err(|_| "managed private key cannot be inspected")? {
-        return Err("managed private key must be a regular file".into());
-    }
-    let private_bytes = read_bounded(&private_path, 4096, "managed private key")?;
-    let private_pem = std::str::from_utf8(&private_bytes)
-        .map_err(|_| "managed private key is not valid UTF-8")?;
-    let envelope = crate::signed_envelope::sign(3, &challenge, private_pem)
-        .map_err(|_| "managed private key could not sign the challenge")?;
-    let verified = crate::signed_envelope::verify(&envelope, &public.pem, 3)
-        .map_err(|_| "managed private key does not match its public key")?;
-    if verified.body.as_slice() != challenge.as_slice() || hex(&verified.key_id) != args.key_id {
-        return Err("managed private key does not match its public key".into());
-    }
-
-    let temp = parent.join(format!(".ivlc-proof-{}", uuid::Uuid::new_v4()));
-    let mut owns_temp = false;
-    let result = (|| {
-        let mut options = OpenOptions::new();
-        options.write(true).create_new(true);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::OpenOptionsExt;
-            options.mode(0o600);
-        }
-        let mut file = options
-            .open(&temp)
-            .map_err(|e| format!("cannot create proof staging file: {e}"))?;
-        owns_temp = true;
-        file.write_all(&envelope)
-            .and_then(|_| file.sync_all())
-            .map_err(|e| format!("cannot persist proof: {e}"))?;
-        fs::hard_link(&temp, &destination).map_err(|_| {
-            "proof output already exists or cannot be published atomically".to_string()
-        })?;
-        Ok::<(), String>(())
-    })();
-    if owns_temp {
-        let _ = fs::remove_file(&temp);
-    }
-    result?;
+    let envelope = sign_managed(3, &args.key_id, args.directory, &challenge)?;
+    let output_path = publish_public(&args.output, &envelope, "proof")?;
+    let output_path = output_path.to_str().ok_or("proof output path is not valid UTF-8")?;
     serde_json::to_string(&serde_json::json!({"schema_version":1,"key_id":args.key_id,"challenge_id":challenge_id,"proof_path":output_path,"proof_sha256":hex(&Sha256::digest(&envelope))})).map_err(|_| "cannot encode proof result".into())
 }
