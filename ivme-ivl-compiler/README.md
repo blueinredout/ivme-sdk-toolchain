@@ -37,6 +37,7 @@ ivlc --map <path> --author-evidence <path> [--output <path>] [--dry-run]
 ivlc --map <path> --init-metadata
 ivlc author-key create [--directory <private-root>]
 ivlc author-key info --key-id <64-hex-id> [--directory <private-root>]
+ivlc author-key prove --challenge <file> --key-id <64-hex-id> --publisher <steam-id> --app-id <app> --output <proof> [--directory <private-root>]
 ```
 
 ### Arguments
@@ -94,6 +95,9 @@ elsewhere. Keep the entire key directory private and back it up to a private
 location. A public PEM alone cannot restore the private key. A custom root must
 also be private to your user; the tool does not change Windows ACLs. Local key
 creation does not register, bind, rotate, or authorize a key with a server.
+`ivlc author-key prove` signs a bounded canonical server-issued binding challenge
+as a kind-3 proof and writes it to a new output file. It does not contact Steam;
+the server remains authoritative for challenge expiry and account ownership.
 
 ## Package contract
 

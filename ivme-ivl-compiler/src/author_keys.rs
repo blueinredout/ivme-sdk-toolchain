@@ -12,6 +12,7 @@ use std::{
     path::{Component, Path, PathBuf},
     process,
 };
+use zeroize::Zeroizing;
 
 #[derive(Parser)]
 #[command(name = "ivlc", disable_help_subcommand = true)]
@@ -36,6 +37,7 @@ struct AuthorKeyArgs {
 enum AuthorKeyCommand {
     Create(CreateArgs),
     Info(InfoArgs),
+    Prove(ProveArgs),
 }
 
 #[derive(Args)]
@@ -47,6 +49,21 @@ struct CreateArgs {
 struct InfoArgs {
     #[arg(long, value_name = "HEX")]
     key_id: String,
+    #[arg(long)]
+    directory: Option<PathBuf>,
+}
+#[derive(Args)]
+struct ProveArgs {
+    #[arg(long)]
+    challenge: PathBuf,
+    #[arg(long, value_name = "HEX")]
+    key_id: String,
+    #[arg(long)]
+    publisher: String,
+    #[arg(long)]
+    app_id: String,
+    #[arg(long)]
+    output: PathBuf,
     #[arg(long)]
     directory: Option<PathBuf>,
 }
@@ -64,6 +81,7 @@ pub fn dispatch() -> ! {
     let result = match args.command {
         AuthorKeyCommand::Create(args) => create(args.directory),
         AuthorKeyCommand::Info(args) => info(&args.key_id, args.directory),
+        AuthorKeyCommand::Prove(args) => prove(args),
     };
     match result {
         Ok(json) => {
@@ -249,7 +267,16 @@ fn create(directory: Option<PathBuf>) -> Result<String, String> {
     serde_json::to_string(&serde_json::json!({"schema_version": 1, "key_id": key_id, "public_key_pem": public_pem, "key_directory": dir})).map_err(|e| e.to_string())
 }
 
-fn info(key_id: &str, directory: Option<PathBuf>) -> Result<String, String> {
+struct ManagedPublicInfo {
+    key_id: String,
+    pem: String,
+    directory: PathBuf,
+}
+
+fn managed_public_info(
+    key_id: &str,
+    directory: Option<PathBuf>,
+) -> Result<ManagedPublicInfo, String> {
     if key_id.len() != 64
         || !key_id
             .bytes()
@@ -294,6 +321,232 @@ fn info(key_id: &str, directory: Option<PathBuf>) -> Result<String, String> {
         return Err("public key does not match the requested key ID".into());
     }
     let dir = fs::canonicalize(dir).map_err(|e| e.to_string())?;
-    let dir = dir.to_str().ok_or("key directory is not valid UTF-8")?;
-    serde_json::to_string(&serde_json::json!({"schema_version": 1, "key_id": actual, "public_key_pem": pem, "key_directory": dir})).map_err(|e| e.to_string())
+    Ok(ManagedPublicInfo {
+        key_id: actual,
+        pem: pem.to_owned(),
+        directory: dir,
+    })
+}
+
+fn info(key_id: &str, directory: Option<PathBuf>) -> Result<String, String> {
+    let public = managed_public_info(key_id, directory)?;
+    let dir = public
+        .directory
+        .to_str()
+        .ok_or("key directory is not valid UTF-8")?;
+    serde_json::to_string(&serde_json::json!({"schema_version": 1, "key_id": public.key_id, "public_key_pem": public.pem, "key_directory": dir})).map_err(|e| e.to_string())
+}
+
+const MAX_CHALLENGE_BYTES: usize = 4096;
+const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+
+fn canonical_decimal_u64(value: &str) -> Result<u64, String> {
+    if value.is_empty()
+        || !value.bytes().all(|b| b.is_ascii_digit())
+        || (value.len() > 1 && value.starts_with('0'))
+    {
+        return Err("publisher must be a canonical decimal uint64".into());
+    }
+    let parsed = value
+        .parse::<u64>()
+        .map_err(|_| "publisher must be a canonical decimal uint64")?;
+    if parsed == 0 {
+        return Err("publisher must be a nonzero decimal uint64".into());
+    }
+    Ok(parsed)
+}
+
+fn valid_lower_hex(value: &str, len: usize) -> bool {
+    value.len() == len
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn canonical_challenge(
+    bytes: &[u8],
+    key_id: &str,
+    publisher: &str,
+    app_id: u32,
+) -> Result<String, String> {
+    let text = std::str::from_utf8(bytes).map_err(|_| "challenge is not valid UTF-8")?;
+    let value: serde_json::Value =
+        serde_json::from_str(text).map_err(|_| "challenge JSON is invalid")?;
+    let object = value.as_object().ok_or("challenge must be a JSON object")?;
+    const FIELDS: [&str; 9] = [
+        "schema_version",
+        "app_id",
+        "publisher_profile_id",
+        "author_key_id",
+        "challenge_id",
+        "nonce",
+        "expires_at_unix",
+        "operation",
+        "replaces_key_id",
+    ];
+    if object.len() != FIELDS.len() || FIELDS.iter().any(|field| !object.contains_key(*field)) {
+        return Err("challenge must contain exactly the nine required fields".into());
+    }
+    let sorted: std::collections::BTreeMap<_, _> = object.iter().collect();
+    if serde_json::to_vec(&sorted).map_err(|_| "challenge JSON is invalid")? != bytes {
+        return Err("challenge JSON is not canonical".into());
+    }
+    if object["schema_version"].as_u64() != Some(1) {
+        return Err("unsupported challenge schema version".into());
+    }
+    if object["app_id"].as_u64() != Some(app_id as u64) || app_id == 0 {
+        return Err("challenge app ID does not match --app-id".into());
+    }
+    let profile = object["publisher_profile_id"]
+        .as_str()
+        .ok_or("publisher profile ID must be a decimal string")?;
+    if canonical_decimal_u64(profile)? != canonical_decimal_u64(publisher)? || profile != publisher
+    {
+        return Err("challenge publisher does not match --publisher".into());
+    }
+    let challenge_key = object["author_key_id"]
+        .as_str()
+        .ok_or("author key ID must be a string")?;
+    if !valid_lower_hex(challenge_key, 64) || challenge_key != key_id {
+        return Err("challenge author key ID does not match --key-id".into());
+    }
+    let challenge_id = object["challenge_id"]
+        .as_str()
+        .ok_or("challenge ID must be a string")?;
+    let parsed_uuid = uuid::Uuid::parse_str(challenge_id)
+        .map_err(|_| "challenge ID must be a canonical lowercase UUID")?;
+    if parsed_uuid.to_string() != challenge_id {
+        return Err("challenge ID must be a canonical lowercase UUID".into());
+    }
+    let nonce = object["nonce"]
+        .as_str()
+        .ok_or("challenge nonce must be a string")?;
+    if !valid_lower_hex(nonce, 64) {
+        return Err("challenge nonce must be 64 lowercase hexadecimal characters".into());
+    }
+    let expires = object["expires_at_unix"]
+        .as_u64()
+        .ok_or("challenge expiry must be a positive integer")?;
+    if expires == 0 || expires > MAX_SAFE_INTEGER {
+        return Err("challenge expiry is outside the supported integer range".into());
+    }
+    let operation = object["operation"]
+        .as_str()
+        .ok_or("challenge operation must be a string")?;
+    let replaces = object["replaces_key_id"]
+        .as_str()
+        .ok_or("predecessor key ID must be a string")?;
+    match operation {
+        "bind" if replaces.is_empty() => (),
+        "rotate" | "recover" if valid_lower_hex(replaces, 64) && replaces != key_id => (),
+        "bind" | "rotate" | "recover" => {
+            return Err("challenge predecessor does not match its operation".into())
+        }
+        _ => return Err("unsupported challenge operation".into()),
+    }
+    Ok(challenge_id.to_owned())
+}
+
+fn read_bounded(
+    path: &Path,
+    limit: usize,
+    description: &str,
+) -> Result<Zeroizing<Vec<u8>>, String> {
+    let mut file = fs::File::open(path).map_err(|e| format!("cannot read {description}: {e}"))?;
+    let metadata = file
+        .metadata()
+        .map_err(|e| format!("cannot inspect {description}: {e}"))?;
+    if !metadata.is_file() || metadata.len() > limit as u64 {
+        return Err(format!("{description} is not a bounded regular file"));
+    }
+    let mut bytes = Zeroizing::new(Vec::with_capacity(limit.min(metadata.len() as usize) + 1));
+    Read::by_ref(&mut file)
+        .take(limit as u64 + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| format!("cannot read {description}: {e}"))?;
+    if bytes.len() > limit {
+        return Err(format!("{description} exceeds {limit} bytes"));
+    }
+    Ok(bytes)
+}
+
+fn prove(args: ProveArgs) -> Result<String, String> {
+    if !valid_lower_hex(&args.key_id, 64) {
+        return Err("key ID must be 64 lowercase hexadecimal characters".into());
+    }
+    canonical_decimal_u64(&args.publisher)?;
+    let app_id = args
+        .app_id
+        .parse::<u32>()
+        .map_err(|_| "app ID must be a nonzero uint32")?;
+    if app_id == 0 || app_id.to_string() != args.app_id {
+        return Err("app ID must be a canonical nonzero uint32".into());
+    }
+
+    let challenge = read_bounded(&args.challenge, MAX_CHALLENGE_BYTES, "challenge file")?;
+    let challenge_id = canonical_challenge(&challenge, &args.key_id, &args.publisher, app_id)?;
+    let requested = if args.output.is_absolute() {
+        args.output
+    } else {
+        env::current_dir()
+            .map_err(|e| e.to_string())?
+            .join(args.output)
+    };
+    let file_name = requested.file_name().ok_or("output must name a new file")?;
+    let parent = requested.parent().ok_or("output must name a new file")?;
+    let parent = fs::canonicalize(parent)
+        .map_err(|e| format!("output directory cannot be resolved: {e}"))?;
+    let destination = parent.join(file_name);
+    let output_path = destination
+        .to_str()
+        .ok_or("proof output path is not valid UTF-8")?;
+    match fs::symlink_metadata(&destination) {
+        Ok(_) => return Err("proof output already exists".into()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+        Err(error) => return Err(format!("proof output cannot be inspected: {error}")),
+    }
+    // Only inspect the managed private key after every server-body context check has passed.
+    let public = managed_public_info(&args.key_id, args.directory)?;
+    let private_path = public.directory.join("private.pem");
+    if is_link_or_reparse(&private_path).map_err(|_| "managed private key cannot be inspected")? {
+        return Err("managed private key must be a regular file".into());
+    }
+    let private_bytes = read_bounded(&private_path, 4096, "managed private key")?;
+    let private_pem = std::str::from_utf8(&private_bytes)
+        .map_err(|_| "managed private key is not valid UTF-8")?;
+    let envelope = crate::signed_envelope::sign(3, &challenge, private_pem)
+        .map_err(|_| "managed private key could not sign the challenge")?;
+    let verified = crate::signed_envelope::verify(&envelope, &public.pem, 3)
+        .map_err(|_| "managed private key does not match its public key")?;
+    if verified.body.as_slice() != challenge.as_slice() || hex(&verified.key_id) != args.key_id {
+        return Err("managed private key does not match its public key".into());
+    }
+
+    let temp = parent.join(format!(".ivlc-proof-{}", uuid::Uuid::new_v4()));
+    let mut owns_temp = false;
+    let result = (|| {
+        let mut options = OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options
+            .open(&temp)
+            .map_err(|e| format!("cannot create proof staging file: {e}"))?;
+        owns_temp = true;
+        file.write_all(&envelope)
+            .and_then(|_| file.sync_all())
+            .map_err(|e| format!("cannot persist proof: {e}"))?;
+        fs::hard_link(&temp, &destination).map_err(|_| {
+            "proof output already exists or cannot be published atomically".to_string()
+        })?;
+        Ok::<(), String>(())
+    })();
+    if owns_temp {
+        let _ = fs::remove_file(&temp);
+    }
+    result?;
+    serde_json::to_string(&serde_json::json!({"schema_version":1,"key_id":args.key_id,"challenge_id":challenge_id,"proof_path":output_path,"proof_sha256":hex(&Sha256::digest(&envelope))})).map_err(|_| "cannot encode proof result".into())
 }

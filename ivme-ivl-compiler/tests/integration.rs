@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
+use sha2::{Digest, Sha256};
 
 static METADATA_FIXTURE_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -621,6 +622,50 @@ fn author_key_create_info_lifecycle() {
     let private = key_dir.join("private.pem");
     let public = key_dir.join("public.pem");
     assert!(fs::read_to_string(&private).unwrap().contains("BEGIN PRIVATE KEY"));
+    let publisher = "76561198000000000";
+    let challenge_id = "550e8400-e29b-41d4-a716-446655440000";
+    let challenge_value = serde_json::json!({
+        "schema_version": 1,
+        "app_id": 440,
+        "publisher_profile_id": publisher,
+        "author_key_id": key_id,
+        "challenge_id": challenge_id,
+        "nonce": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "expires_at_unix": 1_800_000_000u64,
+        "operation": "bind",
+        "replaces_key_id": ""
+    });
+    let challenge_bytes = serde_json::to_vec(&challenge_value).unwrap();
+    let challenge_path = fixture.root.join("challenge.json");
+    fs::write(&challenge_path, &challenge_bytes).unwrap();
+    let proof_path = fixture.root.join("proof.ivsg");
+    let prove_args = ["author-key", "prove", "--challenge", challenge_path.to_str().unwrap(), "--key-id", key_id, "--publisher", publisher, "--app-id", "440", "--output", proof_path.to_str().unwrap(), "--directory", root_arg];
+    let wrong_path = fixture.root.join("wrong-account.ivsg");
+    let mut wrong_args = prove_args.to_vec();
+    let output_arg = wrong_args.iter().position(|arg| *arg == "--output").unwrap() + 1;
+    wrong_args[output_arg] = wrong_path.to_str().unwrap();
+    let publisher_arg = wrong_args.iter().position(|arg| *arg == "--publisher").unwrap() + 1;
+    wrong_args[publisher_arg] = "76561198000000001";
+    let (stdout, stderr, code) = run_compiler(&wrong_args);
+    assert_ne!(code, 0, "{stdout}\n{stderr}");
+    assert!(!wrong_path.exists());
+    let (stdout, stderr, code) = run_compiler(&prove_args);
+    assert_eq!(code, 0, "{stdout}\n{stderr}");
+    let proof_info: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(proof_info["schema_version"], 1);
+    assert_eq!(proof_info["key_id"], key_id);
+    assert_eq!(proof_info["challenge_id"], challenge_id);
+    assert_eq!(proof_info["proof_path"], fs::canonicalize(&proof_path).unwrap().to_str().unwrap());
+    let proof = fs::read(&proof_path).unwrap();
+    assert_eq!(&proof[..8], b"IVSG\x01\x03\0\0");
+    let body_len = u32::from_le_bytes(proof[8..12].try_into().unwrap()) as usize;
+    assert_eq!(&proof[44..44 + body_len], challenge_bytes);
+    let digest = Sha256::digest(&proof).iter().map(|b| format!("{b:02x}")).collect::<String>();
+    assert_eq!(proof_info["proof_sha256"], digest);
+    let existing_proof = proof.clone();
+    let (stdout, stderr, code) = run_compiler(&prove_args);
+    assert_ne!(code, 0, "{stdout}\n{stderr}");
+    assert_eq!(fs::read(&proof_path).unwrap(), existing_proof);
     #[cfg(unix)] {
         use std::os::unix::fs::PermissionsExt;
         assert_eq!(fs::metadata(&key_dir).unwrap().permissions().mode() & 0o777, 0o700);
