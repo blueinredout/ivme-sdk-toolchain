@@ -3,6 +3,7 @@ mod content_identity;
 mod author_evidence;
 #[allow(dead_code)] // Claim verification API is intentionally not wired to CLI flows.
 mod author_release;
+mod author_keys;
 mod error;
 mod map;
 mod mapping;
@@ -66,6 +67,9 @@ fn format_date() -> String {
 }
 
 fn main() {
+    if std::env::args_os().nth(1).as_deref() == Some(std::ffi::OsStr::new("author-key")) {
+        author_keys::dispatch();
+    }
     let cli = Cli::parse();
 
     println!(

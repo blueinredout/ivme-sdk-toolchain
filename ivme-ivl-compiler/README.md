@@ -35,6 +35,8 @@ The release binary is produced at `target/release/ivlc` (or `ivlc.exe` on Window
 ivlc --map <path> [--preview <path>] [--icon <path>] [--mapping <path>] [--output <path>] [--dry-run]
 ivlc --map <path> --author-evidence <path> [--output <path>] [--dry-run]
 ivlc --map <path> --init-metadata
+ivlc author-key create [--directory <private-root>]
+ivlc author-key info --key-id <64-hex-id> [--directory <private-root>]
 ```
 
 ### Arguments
@@ -80,6 +82,18 @@ payload and source target metadata. This is structural transport only: it does
 not verify ownership, certify a target, or grant approval. Evidence time and
 approval are not portable claims; they remain unverified until a separate
 authenticated workflow evaluates them.
+
+### Local author keys
+
+`ivlc author-key create` creates a local RSA-3072 author key. Its one-line JSON
+response contains the key ID, public PEM, and key directory. `ivlc author-key info`
+prints that public information after checking the key ID; it does not read the
+private PEM. The default location is `%APPDATA%/IVME/author-keys/v1` on Windows
+and `$XDG_CONFIG_HOME/ivme/author-keys/v1` (or `$HOME/.config/ivme/author-keys/v1`)
+elsewhere. Keep the entire key directory private and back it up to a private
+location. A public PEM alone cannot restore the private key. A custom root must
+also be private to your user; the tool does not change Windows ACLs. Local key
+creation does not register, bind, rotate, or authorize a key with a server.
 
 ## Package contract
 

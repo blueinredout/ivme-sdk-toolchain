@@ -597,3 +597,45 @@ fn test_manifest_cli_bom_dry_run_and_invalid_utf8() {
     fs::write(&src,[0xff,0xfe]).unwrap();for extra in [&[][..],&["--dry-run".into()][..]]{let(o,e,x)=package_compile(&src,&out,extra);assert_ne!(x,0,"{o}\n{e}");assert!(format!("{o}{e}").to_lowercase().contains("utf"),"{o}\n{e}");assert_eq!(fs::read(&src).unwrap(),[0xff,0xfe]);assert_eq!(fs::read(&out).unwrap(),original);}
     let absent=f.root.join("absent.ivl");fs::write(&src,&b).unwrap();let(o,e,x)=package_compile(&src,&absent,&["--dry-run".into()]);assert_eq!(x,0,"{o}\n{e}");assert!(!absent.exists());assert_eq!(fs::read(&src).unwrap(),b);assert_eq!(fs::read_dir(&f.root).unwrap().count(),2);let _=c;
 }
+
+#[test]
+fn author_key_create_info_lifecycle() {
+    let fixture = OwnedMetadataFixture::new();
+    let mut missing_default = Command::new(env!("CARGO_BIN_EXE_ivlc"));
+    missing_default.args(["author-key", "create"]).current_dir(&fixture.root);
+    #[cfg(windows)] missing_default.env("APPDATA", "");
+    #[cfg(not(windows))] missing_default.env("XDG_CONFIG_HOME", "");
+    assert!(!missing_default.output().unwrap().status.success());
+    assert_eq!(fs::read_dir(&fixture.root).unwrap().count(), 0, "missing default must not write keys into the working directory");
+    let root = fixture.root.join("keys");
+    let root_arg = root.to_str().unwrap();
+    let (stdout, stderr, code) = run_compiler(&["author-key", "create", "--directory", root_arg]);
+    assert_eq!(code, 0, "{stdout}\n{stderr}");
+    let created: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let key_id = created["key_id"].as_str().unwrap();
+    assert_eq!(key_id.len(), 64);
+    assert!(key_id.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
+    assert_eq!(created["schema_version"], 1);
+    assert!(!stdout.contains("PRIVATE KEY"));
+    let key_dir = root.join(key_id);
+    let private = key_dir.join("private.pem");
+    let public = key_dir.join("public.pem");
+    assert!(fs::read_to_string(&private).unwrap().contains("BEGIN PRIVATE KEY"));
+    #[cfg(unix)] {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(fs::metadata(&key_dir).unwrap().permissions().mode() & 0o777, 0o700);
+        assert_eq!(fs::metadata(&private).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+    fs::remove_file(&private).unwrap();
+    let (stdout, stderr, code) = run_compiler(&["author-key", "info", "--key-id", key_id, "--directory", root_arg]);
+    assert_eq!(code, 0, "{stdout}\n{stderr}");
+    let info: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(info["key_id"], key_id);
+    assert_eq!(info["public_key_pem"], created["public_key_pem"]);
+    assert!(!stdout.contains("PRIVATE KEY"));
+    let foreign: serde_json::Value = serde_json::from_str(include_str!("../../contracts/signed-envelope-v1-vector.json")).unwrap();
+    fs::write(&public, foreign["public_key_pem"].as_str().unwrap()).unwrap();
+    let (stdout, stderr, code) = run_compiler(&["author-key", "info", "--key-id", key_id, "--directory", root_arg]);
+    assert_ne!(code, 0, "{stdout}\n{stderr}");
+    assert!(!stdout.contains("PRIVATE KEY"));
+}
