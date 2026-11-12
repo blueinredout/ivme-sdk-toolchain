@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "schema_version": 1,
+    "timeline_contract_id": "ivme-author-timeline-v1",
+    "simulation_contract_id": "ivme-author-sim-v1",
+    "simulation_target_id": "fixture-target-v1",
+    "ruleset_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "profile_id": "76561198000000001",
+    "run_id": "11111111-1111-4111-8111-111111111111",
+    "identity": {
+      "schema_version": 1,
+      "provenance": "local",
+      "level_uuid": "550e8400-e29b-41d4-a716-446655440000",
+      "release_id": "",
+      "content_hash_version": 1,
+      "content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "ruleset_id": "fixture-author-v1",
+      "game_mode": "std",
+      "targets": {
+        "metadata_schema_version": 1,
+        "source_metadata_schema_version": 1,
+        "level_uuid": "550e8400-e29b-41d4-a716-446655440000",
+        "bronze_time_ms": 60000,
+        "silver_time_ms": 45000,
+        "gold_time_ms": 30000,
+        "metadata_valid": true,
+        "medal_state": "configured",
+        "medals_available": true,
+        "diagnostics": [],
+        "author_time_ms": null,
+        "author_provenance": "unavailable"
+      }
+    },
+    "total_steps": 2,
+    "reset_count": 1
+  },
+  "tick_data_hex": "10000000000000000000000000000000000500000000008056400000000000002fc0",
+  "reset_events": [
+    {
+      "tick": 0,
+      "kind": "reset_checkpoint"
+    }
+  ],
+  "evidence_base64": "SVZBRQHTAwAAeyJpZGVudGl0eSI6eyJjb250ZW50X2hhc2giOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwiY29udGVudF9oYXNoX3ZlcnNpb24iOjEsImdhbWVfbW9kZSI6InN0ZCIsImxldmVsX3V1aWQiOiI1NTBlODQwMC1lMjliLTQxZDQtYTcxNi00NDY2NTU0NDAwMDAiLCJwcm92ZW5hbmNlIjoibG9jYWwiLCJyZWxlYXNlX2lkIjoiIiwicnVsZXNldF9pZCI6ImZpeHR1cmUtYXV0aG9yLXYxIiwic2NoZW1hX3ZlcnNpb24iOjEsInRhcmdldHMiOnsiYXV0aG9yX3Byb3ZlbmFuY2UiOiJ1bmF2YWlsYWJsZSIsImF1dGhvcl90aW1lX21zIjpudWxsLCJicm9uemVfdGltZV9tcyI6NjAwMDAsImRpYWdub3N0aWNzIjpbXSwiZ29sZF90aW1lX21zIjozMDAwMCwibGV2ZWxfdXVpZCI6IjU1MGU4NDAwLWUyOWItNDFkNC1hNzE2LTQ0NjY1NTQ0MDAwMCIsIm1lZGFsX3N0YXRlIjoiY29uZmlndXJlZCIsIm1lZGFsc19hdmFpbGFibGUiOnRydWUsIm1ldGFkYXRhX3NjaGVtYV92ZXJzaW9uIjoxLCJtZXRhZGF0YV92YWxpZCI6dHJ1ZSwic2lsdmVyX3RpbWVfbXMiOjQ1MDAwLCJzb3VyY2VfbWV0YWRhdGFfc2NoZW1hX3ZlcnNpb24iOjF9fSwicHJvZmlsZV9pZCI6Ijc2NTYxMTk4MDAwMDAwMDAxIiwicmVzZXRfY291bnQiOjEsInJ1bGVzZXRfZmluZ2VycHJpbnQiOiJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiIiwicnVuX2lkIjoiMTExMTExMTEtMTExMS00MTExLTgxMTEtMTExMTExMTExMTExIiwic2NoZW1hX3ZlcnNpb24iOjEsInNpbXVsYXRpb25fY29udHJhY3RfaWQiOiJpdm1lLWF1dGhvci1zaW0tdjEiLCJzaW11bGF0aW9uX3RhcmdldF9pZCI6ImZpeHR1cmUtdGFyZ2V0LXYxIiwidGltZWxpbmVfY29udHJhY3RfaWQiOiJpdm1lLWF1dGhvci10aW1lbGluZS12MSIsInRvdGFsX3N0ZXBzIjoyfRAAAAAAAAAAAAAAAAAAAAAABQAAAAAAgFZAAAAAAAAAL8AAAAAA",
+  "sha256": "79ee1b09f2feb4feccac9c2e1ca21baba07dc04ee8d1c7482fcd7986c378840f",
+  "time_ms": 17
+}

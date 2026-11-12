@@ -1,5 +1,6 @@
 mod cli;
 mod content_identity;
+mod author_evidence;
 mod error;
 mod map;
 mod mapping;
