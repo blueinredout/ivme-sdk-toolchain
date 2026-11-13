@@ -4,6 +4,8 @@
 use crate::{author_release, signed_envelope};
 use serde_json::{Number, Value};
 use std::collections::BTreeMap;
+use rsa::{pkcs8::{DecodePublicKey, EncodePublicKey}, traits::PublicKeyParts, RsaPublicKey};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 const FIELDS: [&str; 22] = [
@@ -31,7 +33,8 @@ pub fn verify(bytes: &[u8], trusted_master_pem: &str, expected_app: u32,
         || !canonical_nonzero_uuid(expected_revision) {
         return Err(MasterApprovalError::InvalidClaims);
     }
-    let env = signed_envelope::verify(bytes, trusted_master_pem, 2)
+    let selected_pem = select_trusted_pem(bytes, trusted_master_pem)?;
+    let env = signed_envelope::verify(bytes, selected_pem, 2)
         .map_err(|_| MasterApprovalError::InvalidEnvelope)?;
     let claims = validate_body(&env.body)?;
     if claims["app_id"].as_u64() != Some(expected_app as u64)
@@ -41,6 +44,36 @@ pub fn verify(bytes: &[u8], trusted_master_pem: &str, expected_app: u32,
         return Err(MasterApprovalError::InvalidClaims);
     }
     Ok(VerifiedMasterApproval { claims, canonical_body: env.body })
+}
+
+/// Resolve a signed envelope only through the caller-installed bounded public PEM bundle.
+fn select_trusted_pem<'a>(bytes: &[u8], bundle: &'a str) -> Result<&'a str, MasterApprovalError> {
+    const MAX_KEYS: usize = 4;
+    const MAX_PEM: usize = 2048;
+    if bytes.len() < 44 || bundle.is_empty() || bundle.len() > MAX_KEYS * MAX_PEM || !bundle.is_ascii() {
+        return Err(MasterApprovalError::InvalidEnvelope);
+    }
+    let mut rest = bundle.trim();
+    let mut selected = None;
+    let mut seen = Vec::<[u8; 32]>::new();
+    while !rest.is_empty() {
+        if seen.len() == MAX_KEYS || !rest.starts_with("-----BEGIN PUBLIC KEY-----") {
+            return Err(MasterApprovalError::InvalidEnvelope);
+        }
+        let end_marker = "-----END PUBLIC KEY-----";
+        let end = rest.find(end_marker).ok_or(MasterApprovalError::InvalidEnvelope)? + end_marker.len();
+        let pem = &rest[..end];
+        if pem.len() > MAX_PEM { return Err(MasterApprovalError::InvalidEnvelope); }
+        let key = RsaPublicKey::from_public_key_pem(pem).map_err(|_| MasterApprovalError::InvalidEnvelope)?;
+        if key.n().bits() != 3072 { return Err(MasterApprovalError::InvalidEnvelope); }
+        let der = key.to_public_key_der().map_err(|_| MasterApprovalError::InvalidEnvelope)?;
+        let key_id: [u8; 32] = Sha256::digest(der.as_bytes()).into();
+        if seen.contains(&key_id) { return Err(MasterApprovalError::InvalidEnvelope); }
+        if bytes[12..44] == key_id { selected = Some(pem); }
+        seen.push(key_id);
+        rest = rest[end..].trim();
+    }
+    selected.ok_or(MasterApprovalError::InvalidEnvelope)
 }
 
 /// Authenticate the approval, then the exact author envelope under its endorsed key.
@@ -146,9 +179,18 @@ mod tests {
         let item = context["workshop_item_id"].as_str().unwrap();
         let revision = context["revision_id"].as_str().unwrap();
         let master_pem = master["master_public_key_pem"].as_str().unwrap();
+        let alternate_pem = master["same_role_master_public_key_pem"].as_str().unwrap();
         let author_context = &author["expected_context"];
         let author_pem = author["public_key_pem"].as_str().unwrap();
         let mut master_bytes = decode(&master, "envelope_base64");
+        let bundle = format!("{}{}", master_pem, alternate_pem);
+        assert!(verify(&master_bytes, &bundle, app, item, revision).is_ok(), "installed bounded bundle selects the envelope key by header key ID");
+        let alternate_bytes = decode(&master, "same_role_envelope_base64");
+        assert_eq!(select_trusted_pem(&alternate_bytes, &bundle).unwrap().trim(), alternate_pem.trim(), "retired key ID resolves from the installed bundle");
+        assert!(verify(&master_bytes, &format!("{}{}", master_pem, master_pem), app, item, revision).is_err(), "duplicate trusted key IDs are rejected");
+        assert!(verify(&master_bytes, alternate_pem, app, item, revision).is_err(), "unknown envelope signer is rejected");
+        assert!(verify(&master_bytes, &format!("{}not-a-public-key", master_pem), app, item, revision).is_err(), "malformed trusted bundle is rejected");
+        assert!(verify(&master_bytes, &"x".repeat(8193), app, item, revision).is_err(), "oversized trusted bundle is rejected");
         let author_bytes = decode(&author, "envelope_base64");
         let (mut verified, verified_author) = verify_pair(&master_bytes, master_pem, &author_bytes,
             author_pem, app, item, revision).unwrap();
